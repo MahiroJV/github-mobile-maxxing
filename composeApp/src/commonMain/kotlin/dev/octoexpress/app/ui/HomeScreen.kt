@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Activity
+import com.composables.icons.lucide.BookMarked
 import com.composables.icons.lucide.CircleDot
 import com.composables.icons.lucide.Flame
 import com.composables.icons.lucide.FolderGit2
@@ -62,12 +64,14 @@ import com.composables.icons.lucide.GitFork
 import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.Inbox
+import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Star
 import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Trash2
+import com.composables.icons.lucide.User
 import com.composables.icons.lucide.Users
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
@@ -76,8 +80,10 @@ import dev.octoexpress.model.ActivityEventKind
 import dev.octoexpress.model.ContributionCalendar
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
+import dev.octoexpress.ui.components.formatCompactCount
 import dev.octoexpress.ui.components.UserAvatar
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -334,10 +340,16 @@ private fun HomeDashboardPane(
                     if (recentRepos.isNotEmpty()) {
                         item(key = "recent_repos_strip", contentType = "recent_repos") {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = "Recent Repositories",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Lucide.FolderGit2, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        text = "Recent Repositories",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                }
                                 LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     modifier = Modifier.fillMaxWidth().height(124.dp)
@@ -353,7 +365,7 @@ private fun HomeDashboardPane(
                                                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                                             ),
                                             modifier = Modifier
-                                                .width(210.dp)
+                                                .width(216.dp)
                                                 .fillMaxHeight()
                                                 .clickable { onOpenRepo(repo.owner, repo.name) }
                                         ) {
@@ -362,12 +374,32 @@ private fun HomeDashboardPane(
                                                 verticalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                    Text(
-                                                        text = repo.fullName,
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = if (repo.isPrivate) Lucide.Lock else Lucide.BookMarked,
+                                                            contentDescription = if (repo.isPrivate) "Private repository" else "Public repository",
+                                                            modifier = Modifier.size(13.dp),
+                                                            tint = if (repo.isPrivate) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                                                        )
+                                                        Text(
+                                                            text = repo.fullName,
+                                                            style = MaterialTheme.typography.titleSmall,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f)
+                                                        )
+                                                        if (repo.isFork) {
+                                                            Icon(
+                                                                Lucide.GitFork,
+                                                                contentDescription = "Fork",
+                                                                modifier = Modifier.size(12.dp),
+                                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                    }
                                                     Text(
                                                         text = repo.description?.takeIf { it.isNotBlank() }.orEmpty(),
                                                         style = MaterialTheme.typography.bodySmall,
@@ -378,7 +410,7 @@ private fun HomeDashboardPane(
                                                     )
                                                 }
                                                 Row(
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     repo.language?.let { lang ->
@@ -387,13 +419,51 @@ private fun HomeDashboardPane(
                                                             style = MaterialTheme.typography.labelSmall,
                                                             color = MaterialTheme.colorScheme.primary,
                                                             maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f, fill = false)
                                                         )
                                                     }
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Icon(Lucide.Star, contentDescription = null, modifier = Modifier.size(12.dp))
-                                                        Spacer(Modifier.width(3.dp))
-                                                        Text("${repo.stargazersCount}", style = MaterialTheme.typography.labelSmall)
+                                                    if (repo.viewerHasStarred) {
+                                                        Surface(
+                                                            color = Color(0xFFEAB308).copy(alpha = 0.18f),
+                                                            shape = MaterialTheme.shapes.small
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    OctoFilledIcons.Star,
+                                                                    contentDescription = "Starred",
+                                                                    tint = Color(0xFFEAB308),
+                                                                    modifier = Modifier.size(12.dp)
+                                                                )
+                                                                Text(
+                                                                    formatCompactCount(repo.stargazersCount),
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    color = Color(0xFFB45309)
+                                                                )
+                                                            }
+                                                        }
+                                                    } else {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                        ) {
+                                                            Icon(
+                                                                Lucide.Star,
+                                                                contentDescription = "Not starred",
+                                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                                modifier = Modifier.size(12.dp)
+                                                            )
+                                                            Text(
+                                                                formatCompactCount(repo.stargazersCount),
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -418,6 +488,9 @@ private fun HomeDashboardPane(
                                 selected = feedTab,
                                 onSelect = { feedTab = it },
                                 labelProvider = { it.label },
+                                iconProvider = { tab ->
+                                    if (tab == FeedTab.FOLLOWING) Lucide.Users else Lucide.User
+                                },
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
@@ -554,19 +627,19 @@ fun ActivityEventCard(
     onOpenActor: () -> Unit = {},
     onClick: () -> Unit
 ) {
-    val icon: ImageVector = when (event.kind) {
-        ActivityEventKind.PUSH -> Lucide.GitCommitHorizontal
-        ActivityEventKind.PULL_REQUEST, ActivityEventKind.PULL_REQUEST_REVIEW -> Lucide.GitPullRequest
-        ActivityEventKind.ISSUES -> Lucide.CircleDot
-        ActivityEventKind.ISSUE_COMMENT -> Lucide.MessageSquare
-        ActivityEventKind.WATCH -> Lucide.Star
-        ActivityEventKind.FORK -> Lucide.GitFork
-        ActivityEventKind.CREATE -> Lucide.GitBranch
-        ActivityEventKind.DELETE -> Lucide.Trash2
-        ActivityEventKind.RELEASE -> Lucide.Tag
-        ActivityEventKind.PUBLIC -> Lucide.Globe
-        ActivityEventKind.MEMBER -> Lucide.Users
-        ActivityEventKind.OTHER -> Lucide.Activity
+    val (icon: ImageVector, iconTint: Color) = when (event.kind) {
+        ActivityEventKind.PUSH -> Lucide.GitCommitHorizontal to MaterialTheme.colorScheme.primary
+        ActivityEventKind.PULL_REQUEST, ActivityEventKind.PULL_REQUEST_REVIEW -> Lucide.GitPullRequest to Color(0xFF7C3AED)
+        ActivityEventKind.ISSUES -> Lucide.CircleDot to Color(0xFF16A34A)
+        ActivityEventKind.ISSUE_COMMENT -> Lucide.MessageSquare to MaterialTheme.colorScheme.secondary
+        ActivityEventKind.WATCH -> OctoFilledIcons.Star to Color(0xFFEAB308)
+        ActivityEventKind.FORK -> Lucide.GitFork to Color(0xFF0284C7)
+        ActivityEventKind.CREATE -> Lucide.GitBranch to Color(0xFF16A34A)
+        ActivityEventKind.DELETE -> Lucide.Trash2 to MaterialTheme.colorScheme.error
+        ActivityEventKind.RELEASE -> Lucide.Tag to MaterialTheme.colorScheme.tertiary
+        ActivityEventKind.PUBLIC -> Lucide.Globe to MaterialTheme.colorScheme.primary
+        ActivityEventKind.MEMBER -> Lucide.Users to MaterialTheme.colorScheme.secondary
+        ActivityEventKind.OTHER -> Lucide.Activity to MaterialTheme.colorScheme.primary
     }
 
     Card(
@@ -587,7 +660,15 @@ fun ActivityEventCard(
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                    Surface(
+                        color = iconTint.copy(alpha = 0.14f),
+                        shape = CircleShape,
+                        modifier = Modifier.size(22.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(icon, contentDescription = null, modifier = Modifier.size(13.dp), tint = iconTint)
+                        }
+                    }
                     Text(
                         text = "@${event.actor.login} ${event.summaryText}",
                         style = MaterialTheme.typography.bodyMedium,

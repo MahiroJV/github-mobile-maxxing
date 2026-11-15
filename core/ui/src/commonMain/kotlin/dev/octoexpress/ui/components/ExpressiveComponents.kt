@@ -393,6 +393,7 @@ fun StarActionButton(
             onClick = onClick,
             enabled = enabled,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            border = BorderStroke(1.5.dp, starTint.copy(alpha = 0.7f)),
             colors = ButtonDefaults.filledTonalButtonColors(
                 containerColor = container,
                 contentColor = content

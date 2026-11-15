@@ -49,15 +49,19 @@ import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Building2
 import com.composables.icons.lucide.ExternalLink
+import com.composables.icons.lucide.Folder
+import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.Link2
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.UserCheck
 import com.composables.icons.lucide.UserPlus
+import com.composables.icons.lucide.Users
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
 import dev.octoexpress.auth.openUrlInBrowser
@@ -67,6 +71,7 @@ import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
+import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.FollowActionButton
 import dev.octoexpress.ui.components.OctoConnectedButtonGroup
@@ -341,17 +346,20 @@ fun UserProfileScreen(
                                         FilterChip(
                                             selected = activeTab == ProfileTab.REPOS,
                                             onClick = { activeTab = ProfileTab.REPOS },
+                                            leadingIcon = { Icon(Lucide.FolderGit2, contentDescription = null, modifier = Modifier.size(14.dp)) },
                                             label = { Text("${p.publicReposCount} repos") }
                                         )
                                         FilterChip(
                                             selected = activeTab == ProfileTab.FOLLOWERS,
                                             onClick = { activeTab = ProfileTab.FOLLOWERS },
+                                            leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
                                             label = { Text("${p.followersCount} followers") }
                                         )
                                         if (!p.isOrganization) {
                                             FilterChip(
                                                 selected = activeTab == ProfileTab.FOLLOWING,
                                                 onClick = { activeTab = ProfileTab.FOLLOWING },
+                                                leadingIcon = { Icon(Lucide.UserPlus, contentDescription = null, modifier = Modifier.size(14.dp)) },
                                                 label = { Text("${p.followingCount} following") }
                                             )
                                         }
@@ -402,6 +410,15 @@ fun UserProfileScreen(
                                 selected = if (activeTab in visibleTabs) activeTab else ProfileTab.REPOS,
                                 onSelect = { activeTab = it },
                                 labelProvider = { it.label },
+                                iconProvider = { tab ->
+                                    when (tab) {
+                                        ProfileTab.REPOS -> Lucide.Folder
+                                        ProfileTab.STARRED -> OctoFilledIcons.Star
+                                        ProfileTab.ACTIVITY -> Lucide.Activity
+                                        ProfileTab.FOLLOWERS -> Lucide.Users
+                                        ProfileTab.FOLLOWING -> Lucide.UserCheck
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }

@@ -20,7 +20,9 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 private class HomeTestTokenStore : TokenStore {
     var session: AuthSession? = AuthSession("tok_home", userLogin = "octocat")
@@ -301,5 +303,67 @@ class HomeFeedTest {
         assertNull(repo.peekContributionCalendar("octocat"))
         assertNull(repo.peekReceivedEvents("octocat"))
         assertNull(repo.peekUserEvents("octocat"))
+    }
+
+    @Test
+    fun viewerRepositoriesParseViewerHasStarredFlagCleanly() = runTest {
+        val engine = MockEngine {
+            respond(
+                content = """
+                    {
+                      "data": {
+                        "viewer": {
+                          "repositories": {
+                            "nodes": [
+                              {
+                                "id": "R_1",
+                                "name": "starred-repo",
+                                "nameWithOwner": "octocat/starred-repo",
+                                "description": "Starred by viewer",
+                                "isPrivate": false,
+                                "isFork": false,
+                                "stargazerCount": 99,
+                                "forkCount": 4,
+                                "updatedAt": "2026-11-15T10:00:00Z",
+                                "viewerHasStarred": true,
+                                "owner": { "login": "octocat", "avatarUrl": "" },
+                                "primaryLanguage": { "name": "Kotlin", "color": "#A97BFF" },
+                                "defaultBranchRef": { "name": "main" },
+                                "issues": { "totalCount": 3 }
+                              },
+                              {
+                                "id": "R_2",
+                                "name": "plain-repo",
+                                "nameWithOwner": "octocat/plain-repo",
+                                "description": null,
+                                "isPrivate": true,
+                                "isFork": true,
+                                "stargazerCount": 0,
+                                "forkCount": 0,
+                                "updatedAt": "2026-11-14T10:00:00Z",
+                                "viewerHasStarred": false,
+                                "owner": { "login": "octocat", "avatarUrl": "" },
+                                "primaryLanguage": null,
+                                "defaultBranchRef": { "name": "main" },
+                                "issues": { "totalCount": 0 }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        val gql = GitHubGraphQlService(createClient(engine))
+        val repos = gql.fetchViewerRepositories()
+        assertEquals(2, repos.size)
+        assertTrue(repos[0].viewerHasStarred)
+        assertFalse(repos[0].isPrivate)
+        assertFalse(repos[1].viewerHasStarred)
+        assertTrue(repos[1].isPrivate)
+        assertTrue(repos[1].isFork)
     }
 }
