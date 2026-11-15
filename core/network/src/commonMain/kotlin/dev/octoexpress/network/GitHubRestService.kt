@@ -3,8 +3,13 @@ package dev.octoexpress.network
 import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.ActivityEventKind
 import dev.octoexpress.model.BranchRef
+import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.FileChangeStatus
 import dev.octoexpress.model.FileContent
+import dev.octoexpress.model.IssueOrPullKind
+import dev.octoexpress.model.IssueOrPullState
+import dev.octoexpress.model.IssueOrPullSummary
+import dev.octoexpress.model.LabelTag
 import dev.octoexpress.model.MergeMethod
 import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationSubjectType
@@ -228,6 +233,67 @@ private data class RestUserFollowItemDto(
     val login: String,
     @SerialName("avatar_url") val avatarUrl: String = "",
     @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestUserSearchResponse(
+    val items: List<RestUserFollowItemDto> = emptyList()
+)
+
+@Serializable
+private data class RestSearchLabelDto(
+    val name: String,
+    val color: String = "6750A4",
+    val description: String? = null
+)
+
+@Serializable
+private data class RestSearchIssueItemDto(
+    @SerialName("node_id") val nodeId: String = "",
+    val id: Long = 0L,
+    val number: Int,
+    val title: String,
+    val state: String = "open",
+    val draft: Boolean = false,
+    @SerialName("repository_url") val repositoryUrl: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+    val comments: Int = 0,
+    val user: RestEventActorDto? = null,
+    val labels: List<RestSearchLabelDto> = emptyList(),
+    @SerialName("pull_request") val pullRequest: JsonObject? = null
+)
+
+@Serializable
+private data class RestIssueSearchResponse(
+    val items: List<RestSearchIssueItemDto> = emptyList()
+)
+
+@Serializable
+private data class RestCodeTextMatchDto(
+    val fragment: String = ""
+)
+
+@Serializable
+private data class RestCodeRepoDto(
+    @SerialName("full_name") val fullName: String = "",
+    val name: String = "",
+    val owner: RestEventActorDto? = null
+)
+
+@Serializable
+private data class RestCodeItemDto(
+    val name: String,
+    val path: String,
+    val sha: String = "",
+    @SerialName("html_url") val htmlUrl: String = "",
+    val repository: RestCodeRepoDto = RestCodeRepoDto(),
+    @SerialName("text_matches") val textMatches: List<RestCodeTextMatchDto> = emptyList()
+)
+
+@Serializable
+private data class RestCodeSearchResponse(
+    val items: List<RestCodeItemDto> = emptyList()
 )
 
 class GitHubRestService(
@@ -657,6 +723,87 @@ class GitHubRestService(
         return res.body<List<RestUserFollowItemDto>>().map {
             UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
         }
+    }
+
+    suspend fun searchIssuesAndPullsRest(query: String, perPage: Int = 30): List<IssueOrPullSummary> {
+        val res = httpClient.get("$baseUrl/search/issues") {
+            parameter("q", query)
+            parameter("sort", "updated")
+            parameter("order", "desc")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Issue search failed (${res.status.value})")
+        }
+        return res.body<RestIssueSearchResponse>().items.map { item ->
+            val repoParts = item.repositoryUrl.removePrefix("$baseUrl/repos/").split('/')
+            val repoOwner = repoParts.getOrNull(0).orEmpty()
+            val repoName = repoParts.getOrNull(1).orEmpty()
+            val repoFull = if (repoOwner.isNotBlank() && repoName.isNotBlank()) "$repoOwner/$repoName" else ""
+            IssueOrPullSummary(
+                id = item.nodeId.ifBlank { "issue_${item.id}_${item.number}" },
+                number = item.number,
+                title = item.title,
+                kind = if (item.pullRequest != null) IssueOrPullKind.PULL_REQUEST else IssueOrPullKind.ISSUE,
+                state = if (item.state.equals("closed", ignoreCase = true)) IssueOrPullState.CLOSED else IssueOrPullState.OPEN,
+                isDraft = item.draft,
+                repoFullName = repoFull,
+                repoOwner = repoOwner,
+                repoName = repoName,
+                author = UserSummary(
+                    login = item.user?.login ?: "ghost",
+                    avatarUrl = item.user?.avatarUrl.orEmpty()
+                ),
+                createdAt = item.createdAt,
+                updatedAt = item.updatedAt,
+                commentCount = item.comments,
+                labels = item.labels.map { LabelTag(it.name, it.color, it.description) }
+            )
+        }
+    }
+
+    suspend fun searchCodeRest(query: String, perPage: Int = 30): List<CodeSearchHit> {
+        val res = httpClient.get("$baseUrl/search/code") {
+            header(HttpHeaders.Accept, "application/vnd.github.text-match+json")
+            parameter("q", query)
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Code search failed (${res.status.value})")
+        }
+        return res.body<RestCodeSearchResponse>().items.map { item ->
+            val full = item.repository.fullName
+            val owner = item.repository.owner?.login ?: full.substringBefore('/', "")
+            val name = item.repository.name.ifBlank { full.substringAfter('/', "") }
+            CodeSearchHit(
+                name = item.name,
+                path = item.path,
+                sha = item.sha,
+                repoFullName = full,
+                repoOwner = owner,
+                repoName = name,
+                htmlUrl = item.htmlUrl,
+                fragments = item.textMatches.mapNotNull { it.fragment.takeIf(String::isNotBlank) }
+            )
+        }
+    }
+
+    suspend fun searchUsersRest(query: String, perPage: Int = 30): List<UserSummary> {
+        val res = httpClient.get("$baseUrl/search/users") {
+            parameter("q", query)
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "User search failed (${res.status.value})")
+        }
+        return res.body<RestUserSearchResponse>().items.map {
+            UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
+        }
+    }
+
+    suspend fun fetchTrendingRepositories(language: String? = null, perPage: Int = 25): List<RepoSummary> {
+        val langPart = language?.trim()?.takeIf { it.isNotEmpty() }?.let { " language:$it" } ?: ""
+        return searchRepositoriesRest(query = "stars:>500$langPart", perPage = perPage)
     }
 
     private fun parseActivityEvent(dto: RestEventDto): ActivityEvent {

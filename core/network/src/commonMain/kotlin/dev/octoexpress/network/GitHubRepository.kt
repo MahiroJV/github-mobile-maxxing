@@ -3,6 +3,7 @@ package dev.octoexpress.network
 import dev.octoexpress.auth.SessionManager
 import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.BranchRef
+import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.ContributionCalendar
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.IssueFilterPreset
@@ -136,6 +137,10 @@ class GitHubRepository(
     private val userOrgsCache = LruMemoryCache<String, List<OrganizationSummary>>(ttl = 180.seconds, maxEntries = 24)
     private val userFollowersCache = LruMemoryCache<String, List<UserSummary>>(ttl = 120.seconds, maxEntries = 24)
     private val userFollowingCache = LruMemoryCache<String, List<UserSummary>>(ttl = 120.seconds, maxEntries = 24)
+    private val searchIssuesCache = LruMemoryCache<String, List<IssueOrPullSummary>>(ttl = 90.seconds, maxEntries = 16)
+    private val searchCodeCache = LruMemoryCache<String, List<CodeSearchHit>>(ttl = 90.seconds, maxEntries = 16)
+    private val searchUsersCache = LruMemoryCache<String, List<UserSummary>>(ttl = 90.seconds, maxEntries = 16)
+    private val trendingReposCache = LruMemoryCache<String, List<RepoSummary>>(ttl = 180.seconds, maxEntries = 12)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -159,6 +164,10 @@ class GitHubRepository(
         userOrgsCache.clear()
         userFollowersCache.clear()
         userFollowingCache.clear()
+        searchIssuesCache.clear()
+        searchCodeCache.clear()
+        searchUsersCache.clear()
+        trendingReposCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -663,6 +672,81 @@ class GitHubRepository(
             restService.fetchUserFollowing(login)
         }.onSuccess {
             userFollowingCache.put(login, it)
+        }
+    }
+
+    suspend fun searchIssuesAndPullsGlobal(
+        query: String,
+        forceRefresh: Boolean = false
+    ): Result<List<IssueOrPullSummary>> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return Result.success(emptyList())
+        if (!forceRefresh) {
+            searchIssuesCache.peekIfFresh(trimmed)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.searchIssuesAndPullsRest(trimmed)
+        }.onSuccess {
+            searchIssuesCache.put(trimmed, it)
+        }
+    }
+
+    suspend fun searchCode(
+        query: String,
+        forceRefresh: Boolean = false
+    ): Result<List<CodeSearchHit>> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return Result.success(emptyList())
+        if (!forceRefresh) {
+            searchCodeCache.peekIfFresh(trimmed)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.searchCodeRest(trimmed)
+        }.onSuccess {
+            searchCodeCache.put(trimmed, it)
+        }
+    }
+
+    suspend fun searchUsers(
+        query: String,
+        forceRefresh: Boolean = false
+    ): Result<List<UserSummary>> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return Result.success(emptyList())
+        if (!forceRefresh) {
+            searchUsersCache.peekIfFresh(trimmed)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.searchUsersRest(trimmed)
+        }.onSuccess {
+            searchUsersCache.put(trimmed, it)
+        }
+    }
+
+    fun peekSearchIssuesAndPullsGlobal(query: String): List<IssueOrPullSummary>? =
+        searchIssuesCache.peek(query.trim())
+
+    fun peekSearchCode(query: String): List<CodeSearchHit>? =
+        searchCodeCache.peek(query.trim())
+
+    fun peekSearchUsers(query: String): List<UserSummary>? =
+        searchUsersCache.peek(query.trim())
+
+    fun peekTrendingRepositories(language: String? = null): List<RepoSummary>? =
+        trendingReposCache.peek(language?.trim().orEmpty())
+
+    suspend fun getTrendingRepositories(
+        language: String? = null,
+        forceRefresh: Boolean = false
+    ): Result<List<RepoSummary>> {
+        val key = language?.trim().orEmpty()
+        if (!forceRefresh) {
+            trendingReposCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchTrendingRepositories(key.takeIf(String::isNotEmpty))
+        }.onSuccess {
+            trendingReposCache.put(key, it)
         }
     }
 }

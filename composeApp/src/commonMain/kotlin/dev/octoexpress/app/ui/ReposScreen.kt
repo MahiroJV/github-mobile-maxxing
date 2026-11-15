@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -68,6 +69,8 @@ import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleDot
 import com.composables.icons.lucide.File
+import com.composables.icons.lucide.FileCode
+import com.composables.icons.lucide.Flame
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.GitBranch
 import com.composables.icons.lucide.GitFork
@@ -78,16 +81,22 @@ import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Star
+import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
+import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.FileContent
+import dev.octoexpress.model.GlobalSearchKind
+import dev.octoexpress.model.IssueOrPullKind
+import dev.octoexpress.model.IssueOrPullState
 import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
+import dev.octoexpress.model.UserSummary
 import dev.octoexpress.ui.components.CodeViewer
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
@@ -113,6 +122,8 @@ private enum class RepoDetailTab(val label: String) {
     PULLS("PRs")
 }
 
+private val TRENDING_LANGUAGES = listOf("All", "Kotlin", "TypeScript", "Python", "Rust", "Go", "Swift")
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun ReposScreen(
@@ -121,6 +132,7 @@ fun ReposScreen(
     onMessage: (String) -> Unit
 ) {
     var selectedRepo by remember { mutableStateOf<RepoSummary?>(null) }
+    var selectedInitialFilePath by remember { mutableStateOf<String?>(null) }
     var selectedIssueTarget by remember { mutableStateOf<IssuePullTarget?>(null) }
 
     BackHandler(enabled = selectedIssueTarget != null) {
@@ -142,7 +154,11 @@ fun ReposScreen(
             RepoDetailScreen(
                 repo = selectedRepo!!,
                 container = container,
-                onBack = { selectedRepo = null },
+                initialFilePath = selectedInitialFilePath,
+                onBack = {
+                    selectedRepo = null
+                    selectedInitialFilePath = null
+                },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
                 onOpenUser = onOpenUser,
                 onMessage = onMessage
@@ -152,7 +168,21 @@ fun ReposScreen(
         else -> {
             RepoListPane(
                 container = container,
-                onSelectRepo = { selectedRepo = it }
+                onSelectRepo = {
+                    selectedInitialFilePath = null
+                    selectedRepo = it
+                },
+                onSelectCodeHit = { hit ->
+                    selectedInitialFilePath = hit.path
+                    selectedRepo = RepoSummary(
+                        id = "code_${hit.repoFullName}",
+                        name = hit.repoName,
+                        owner = hit.repoOwner,
+                        fullName = hit.repoFullName
+                    )
+                },
+                onSelectIssuePull = { selectedIssueTarget = it },
+                onSelectUser = onOpenUser
             )
         }
     }
@@ -162,14 +192,27 @@ fun ReposScreen(
 @Composable
 private fun RepoListPane(
     container: AppContainer,
-    onSelectRepo: (RepoSummary) -> Unit
+    onSelectRepo: (RepoSummary) -> Unit,
+    onSelectCodeHit: (CodeSearchHit) -> Unit,
+    onSelectIssuePull: (IssuePullTarget) -> Unit,
+    onSelectUser: (String) -> Unit
 ) {
     var activeTab by remember { mutableStateOf(RepoListTab.MINE) }
+    var searchKind by remember { mutableStateOf(GlobalSearchKind.REPOSITORIES) }
     var searchQuery by remember { mutableStateOf("") }
     var submittedSearchQuery by remember { mutableStateOf("") }
+    var trendingLang by remember { mutableStateOf("All") }
+
     var repos by remember {
         mutableStateOf(container.repository.peekViewerRepositories().orEmpty())
     }
+    var issueHits by remember { mutableStateOf<List<IssueOrPullSummary>>(emptyList()) }
+    var codeHits by remember { mutableStateOf<List<CodeSearchHit>>(emptyList()) }
+    var userHits by remember { mutableStateOf<List<UserSummary>>(emptyList()) }
+    var trendingRepos by remember {
+        mutableStateOf(container.repository.peekTrendingRepositories(null).orEmpty())
+    }
+
     var isLoading by remember { mutableStateOf(repos.isEmpty()) }
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
@@ -177,64 +220,133 @@ private fun RepoListPane(
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
-    fun loadRepos(forceRefresh: Boolean = false, targetTab: RepoListTab = activeTab) {
+    fun loadTrending(langLabel: String = trendingLang, forceRefresh: Boolean = false) {
         val currentSeq = ++requestSeq
-        val trimmedQuery = searchQuery.trim()
-        if (targetTab == RepoListTab.SEARCH) {
-            submittedSearchQuery = trimmedQuery
-            if (trimmedQuery.isEmpty()) {
-                repos = emptyList()
-                isLoading = false
-                isRefreshing = false
-                errorMsg = null
-                return
-            }
-        }
+        val apiLang = langLabel.takeUnless { it == "All" }
         scope.launch {
-            val cached = when (targetTab) {
-                RepoListTab.MINE -> container.repository.peekViewerRepositories()
-                RepoListTab.STARRED -> container.repository.peekStarredRepositories()
-                RepoListTab.SEARCH -> container.repository.peekSearchRepositories(trimmedQuery)
-            }
+            val cached = container.repository.peekTrendingRepositories(apiLang)
             if (cached != null) {
-                repos = cached
+                trendingRepos = cached
                 isLoading = false
             } else {
-                repos = emptyList()
+                trendingRepos = emptyList()
                 isLoading = true
             }
             if (forceRefresh) isRefreshing = true
             errorMsg = null
-            val res = when (targetTab) {
-                RepoListTab.MINE -> container.repository.getViewerRepositories(forceRefresh = forceRefresh)
-                RepoListTab.STARRED -> container.repository.getStarredRepositories(forceRefresh = forceRefresh)
-                RepoListTab.SEARCH -> container.repository.searchRepositories(trimmedQuery, forceRefresh = forceRefresh)
+            val res = container.repository.getTrendingRepositories(apiLang, forceRefresh = forceRefresh)
+            if (requestSeq != currentSeq || activeTab != RepoListTab.SEARCH || submittedSearchQuery.isNotBlank()) {
+                return@launch
             }
-            if (requestSeq != currentSeq || activeTab != targetTab) return@launch
             res.onSuccess {
-                repos = it
+                trendingRepos = it
                 isLoading = false
                 isRefreshing = false
             }.onFailure {
-                errorMsg = it.message ?: "Failed to load repositories"
+                errorMsg = it.message ?: "Failed to load trending repositories"
                 isLoading = false
                 isRefreshing = false
             }
         }
     }
 
-    LaunchedEffect(activeTab) {
+    fun loadRepos(
+        forceRefresh: Boolean = false,
+        targetTab: RepoListTab = activeTab,
+        targetSearchKind: GlobalSearchKind = searchKind
+    ) {
+        val trimmedQuery = searchQuery.trim()
+        if (targetTab == RepoListTab.SEARCH) {
+            submittedSearchQuery = trimmedQuery
+            if (trimmedQuery.isEmpty()) {
+                loadTrending(trendingLang, forceRefresh = forceRefresh)
+                return
+            }
+        }
+
+        val currentSeq = ++requestSeq
+        scope.launch {
+            when (targetTab) {
+                RepoListTab.MINE -> {
+                    val cached = container.repository.peekViewerRepositories()
+                    if (cached != null) { repos = cached; isLoading = false } else { repos = emptyList(); isLoading = true }
+                }
+                RepoListTab.STARRED -> {
+                    val cached = container.repository.peekStarredRepositories()
+                    if (cached != null) { repos = cached; isLoading = false } else { repos = emptyList(); isLoading = true }
+                }
+                RepoListTab.SEARCH -> when (targetSearchKind) {
+                    GlobalSearchKind.REPOSITORIES -> {
+                        val cached = container.repository.peekSearchRepositories(trimmedQuery)
+                        if (cached != null) { repos = cached; isLoading = false } else { repos = emptyList(); isLoading = true }
+                    }
+                    GlobalSearchKind.ISSUES_PRS -> {
+                        val cached = container.repository.peekSearchIssuesAndPullsGlobal(trimmedQuery)
+                        if (cached != null) { issueHits = cached; isLoading = false } else { issueHits = emptyList(); isLoading = true }
+                    }
+                    GlobalSearchKind.CODE -> {
+                        val cached = container.repository.peekSearchCode(trimmedQuery)
+                        if (cached != null) { codeHits = cached; isLoading = false } else { codeHits = emptyList(); isLoading = true }
+                    }
+                    GlobalSearchKind.USERS -> {
+                        val cached = container.repository.peekSearchUsers(trimmedQuery)
+                        if (cached != null) { userHits = cached; isLoading = false } else { userHits = emptyList(); isLoading = true }
+                    }
+                }
+            }
+            if (forceRefresh) isRefreshing = true
+            errorMsg = null
+
+            when (targetTab) {
+                RepoListTab.MINE -> container.repository.getViewerRepositories(forceRefresh = forceRefresh)
+                    .also { if (requestSeq != currentSeq || activeTab != targetTab) return@launch }
+                    .onSuccess { repos = it; isLoading = false; isRefreshing = false }
+                    .onFailure { errorMsg = it.message ?: "Failed to load repositories"; isLoading = false; isRefreshing = false }
+                RepoListTab.STARRED -> container.repository.getStarredRepositories(forceRefresh = forceRefresh)
+                    .also { if (requestSeq != currentSeq || activeTab != targetTab) return@launch }
+                    .onSuccess { repos = it; isLoading = false; isRefreshing = false }
+                    .onFailure { errorMsg = it.message ?: "Failed to load starred repositories"; isLoading = false; isRefreshing = false }
+                RepoListTab.SEARCH -> when (targetSearchKind) {
+                    GlobalSearchKind.REPOSITORIES -> container.repository.searchRepositories(trimmedQuery, forceRefresh = forceRefresh)
+                        .also { if (requestSeq != currentSeq || activeTab != targetTab || searchKind != targetSearchKind) return@launch }
+                        .onSuccess { repos = it; isLoading = false; isRefreshing = false }
+                        .onFailure { errorMsg = it.message ?: "Repository search failed"; isLoading = false; isRefreshing = false }
+                    GlobalSearchKind.ISSUES_PRS -> container.repository.searchIssuesAndPullsGlobal(trimmedQuery, forceRefresh = forceRefresh)
+                        .also { if (requestSeq != currentSeq || activeTab != targetTab || searchKind != targetSearchKind) return@launch }
+                        .onSuccess { issueHits = it; isLoading = false; isRefreshing = false }
+                        .onFailure { errorMsg = it.message ?: "Issue search failed"; isLoading = false; isRefreshing = false }
+                    GlobalSearchKind.CODE -> container.repository.searchCode(trimmedQuery, forceRefresh = forceRefresh)
+                        .also { if (requestSeq != currentSeq || activeTab != targetTab || searchKind != targetSearchKind) return@launch }
+                        .onSuccess { codeHits = it; isLoading = false; isRefreshing = false }
+                        .onFailure { errorMsg = it.message ?: "Code search failed"; isLoading = false; isRefreshing = false }
+                    GlobalSearchKind.USERS -> container.repository.searchUsers(trimmedQuery, forceRefresh = forceRefresh)
+                        .also { if (requestSeq != currentSeq || activeTab != targetTab || searchKind != targetSearchKind) return@launch }
+                        .onSuccess { userHits = it; isLoading = false; isRefreshing = false }
+                        .onFailure { errorMsg = it.message ?: "User search failed"; isLoading = false; isRefreshing = false }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(activeTab, searchKind, trendingLang) {
         if (activeTab != RepoListTab.SEARCH) {
             loadRepos(forceRefresh = false, targetTab = activeTab)
         } else if (searchQuery.isNotBlank()) {
-            loadRepos(forceRefresh = false, targetTab = RepoListTab.SEARCH)
+            loadRepos(forceRefresh = false, targetTab = RepoListTab.SEARCH, targetSearchKind = searchKind)
         } else {
-            requestSeq++
-            repos = emptyList()
-            errorMsg = null
-            isLoading = false
-            isRefreshing = false
+            submittedSearchQuery = ""
+            loadTrending(trendingLang, forceRefresh = false)
         }
+    }
+
+    val hasCurrentItems = when {
+        activeTab != RepoListTab.SEARCH -> repos.isNotEmpty()
+        submittedSearchQuery.isBlank() -> trendingRepos.isNotEmpty()
+        searchKind == GlobalSearchKind.REPOSITORIES -> repos.isNotEmpty()
+        searchKind == GlobalSearchKind.ISSUES_PRS -> issueHits.isNotEmpty()
+        searchKind == GlobalSearchKind.CODE -> codeHits.isNotEmpty()
+        searchKind == GlobalSearchKind.USERS -> userHits.isNotEmpty()
+        else -> false
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -244,7 +356,7 @@ private fun RepoListPane(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Repositories",
+                    text = if (activeTab == RepoListTab.SEARCH && submittedSearchQuery.isBlank()) "Explore" else "Repositories",
                     style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.weight(1f)
                 )
@@ -257,11 +369,19 @@ private fun RepoListPane(
                 options = RepoListTab.entries,
                 selected = activeTab,
                 onSelect = { activeTab = it },
-                labelProvider = { it.label },
+                labelProvider = { if (it == RepoListTab.SEARCH) "Explore / Search" else it.label },
                 modifier = Modifier.fillMaxWidth()
             )
             if (activeTab == RepoListTab.SEARCH) {
                 Spacer(Modifier.height(10.dp))
+                OctoConnectedButtonGroup(
+                    options = GlobalSearchKind.entries,
+                    selected = searchKind,
+                    onSelect = { searchKind = it },
+                    labelProvider = { it.label },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -269,7 +389,16 @@ private fun RepoListPane(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search GitHub repositories...") },
+                        placeholder = {
+                            Text(
+                                when (searchKind) {
+                                    GlobalSearchKind.REPOSITORIES -> "Search repositories..."
+                                    GlobalSearchKind.ISSUES_PRS -> "Search issues & PRs..."
+                                    GlobalSearchKind.CODE -> "Search code (e.g. remember repo:foo/bar)..."
+                                    GlobalSearchKind.USERS -> "Search GitHub users & orgs..."
+                                }
+                            )
+                        },
                         leadingIcon = { Icon(Lucide.Search, contentDescription = null) },
                         trailingIcon = if (searchQuery.isNotEmpty()) {
                             {
@@ -277,8 +406,8 @@ private fun RepoListPane(
                                     onClick = {
                                         searchQuery = ""
                                         submittedSearchQuery = ""
-                                        repos = emptyList()
                                         errorMsg = null
+                                        loadTrending(trendingLang, forceRefresh = false)
                                     }
                                 ) {
                                     Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
@@ -319,26 +448,47 @@ private fun RepoListPane(
                         Text("Search")
                     }
                 }
+                if (submittedSearchQuery.isBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(TRENDING_LANGUAGES, key = { it }) { lang ->
+                            FilterChip(
+                                selected = trendingLang == lang,
+                                onClick = { trendingLang = lang },
+                                leadingIcon = if (lang == "All") {
+                                    { Icon(Lucide.Flame, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null,
+                                label = { Text(if (lang == "All") "Trending All" else lang) }
+                            )
+                        }
+                    }
+                }
             }
-            if ((isLoading || isRefreshing) && repos.isNotEmpty()) {
+            if ((isLoading || isRefreshing) && hasCurrentItems) {
                 Spacer(Modifier.height(8.dp))
                 OctoWavyProgress()
             }
         }
 
         PullToRefreshBox(
-            isRefreshing = isRefreshing && repos.isNotEmpty(),
+            isRefreshing = isRefreshing && hasCurrentItems,
             onRefresh = { loadRepos(forceRefresh = true) },
             modifier = Modifier.fillMaxSize()
         ) {
             when {
-                isLoading && repos.isEmpty() -> {
+                isLoading && !hasCurrentItems -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        OctoLoadingState(message = "Loading repositories...")
+                        OctoLoadingState(
+                            message = if (activeTab == RepoListTab.SEARCH && submittedSearchQuery.isBlank()) {
+                                "Loading trending repositories..."
+                            } else {
+                                "Loading results..."
+                            }
+                        )
                     }
                 }
 
-                errorMsg != null && repos.isEmpty() -> {
+                errorMsg != null && !hasCurrentItems -> {
                     Column(
                         modifier = Modifier.fillMaxSize().padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -352,20 +502,97 @@ private fun RepoListPane(
                     }
                 }
 
-                repos.isEmpty() -> {
+                !hasCurrentItems -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         Text(
                             text = when (activeTab) {
                                 RepoListTab.SEARCH -> if (submittedSearchQuery.isBlank()) {
-                                    "Enter a query to search repositories."
+                                    "No trending repositories found."
                                 } else {
-                                    "No repositories matched \"$submittedSearchQuery\"."
+                                    "No ${searchKind.label} matched \"$submittedSearchQuery\"."
                                 }
                                 RepoListTab.STARRED -> "No starred repositories found."
                                 RepoListTab.MINE -> "No repositories found."
                             },
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+
+                activeTab == RepoListTab.SEARCH && submittedSearchQuery.isBlank() -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            items = trendingRepos,
+                            key = { "trending_${it.id}" },
+                            contentType = { "repo_summary" }
+                        ) { repo ->
+                            RepoSummaryCard(repo = repo, onClick = { onSelectRepo(repo) })
+                        }
+                    }
+                }
+
+                activeTab == RepoListTab.SEARCH && searchKind == GlobalSearchKind.ISSUES_PRS -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            items = issueHits,
+                            key = { "issue_${it.id}" },
+                            contentType = { "issue_search_hit" }
+                        ) { item ->
+                            SearchIssuePullCard(
+                                item = item,
+                                onOpenUser = onSelectUser,
+                                onClick = {
+                                    onSelectIssuePull(
+                                        IssuePullTarget(
+                                            owner = item.repoOwner,
+                                            repo = item.repoName,
+                                            number = item.number,
+                                            hintTitle = item.title
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
+                activeTab == RepoListTab.SEARCH && searchKind == GlobalSearchKind.CODE -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            items = codeHits,
+                            key = { "${it.repoFullName}:${it.path}:${it.sha}" },
+                            contentType = { "code_search_hit" }
+                        ) { hit ->
+                            CodeSearchHitCard(hit = hit, onClick = { onSelectCodeHit(hit) })
+                        }
+                    }
+                }
+
+                activeTab == RepoListTab.SEARCH && searchKind == GlobalSearchKind.USERS -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            items = userHits,
+                            key = { "user_${it.login}" },
+                            contentType = { "user_search_hit" }
+                        ) { user ->
+                            SearchUserCard(user = user, onClick = { onSelectUser(user.login) })
+                        }
                     }
                 }
 
@@ -385,6 +612,161 @@ private fun RepoListPane(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchIssuePullCard(
+    item: IssueOrPullSummary,
+    onOpenUser: (String) -> Unit,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(
+                    imageVector = if (item.kind == IssueOrPullKind.PULL_REQUEST) Lucide.GitPullRequest else Lucide.CircleDot,
+                    contentDescription = null,
+                    tint = if (item.state == IssueOrPullState.OPEN) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.tertiary
+                    },
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "${item.repoFullName} #${item.number}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                ExpressiveStatusPill(
+                    label = when {
+                        item.isDraft -> "Draft"
+                        item.state == IssueOrPullState.OPEN -> "Open"
+                        item.state == IssueOrPullState.MERGED -> "Merged"
+                        else -> "Closed"
+                    },
+                    containerColor = if (item.state == IssueOrPullState.OPEN) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
+                    contentColor = if (item.state == IssueOrPullState.OPEN) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    }
+                )
+            }
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                UserAvatar(
+                    avatarUrl = item.author.avatarUrl,
+                    login = item.author.login,
+                    sizeDp = 20,
+                    modifier = Modifier.clickable { onOpenUser(item.author.login) }
+                )
+                Text(
+                    text = "@${item.author.login}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onOpenUser(item.author.login) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CodeSearchHitCard(
+    hit: CodeSearchHit,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(
+                    Lucide.FileCode,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = hit.path,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Text(
+                text = hit.repoFullName,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            hit.fragments.firstOrNull()?.let { snippet ->
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = snippet.trim(),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchUserCard(
+    user: UserSummary,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            UserAvatar(user.avatarUrl, user.login, sizeDp = 40)
+            Column(modifier = Modifier.weight(1f)) {
+                Text("@${user.login}", style = MaterialTheme.typography.titleMedium)
+                if (user.htmlUrl.isNotBlank()) {
+                    Text(
+                        text = user.htmlUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -474,6 +856,7 @@ fun RepoSummaryCard(
 fun RepoDetailScreen(
     repo: RepoSummary,
     container: AppContainer,
+    initialFilePath: String? = null,
     onBack: () -> Unit,
     onOpenIssueOrPull: (IssuePullTarget) -> Unit,
     onOpenUser: (String) -> Unit = {},
@@ -615,22 +998,30 @@ fun RepoDetailScreen(
         }
     }
 
-    LaunchedEffect(repo.fullName) {
+    LaunchedEffect(repo.fullName, initialFilePath) {
         isLoading = detail == null && entries.isEmpty()
+        val initialParent = initialFilePath?.substringBeforeLast('/', "")?.takeIf { it.isNotBlank() } ?: ""
+        currentPath = initialParent
+        var resolvedRef = currentRef
         coroutineScope {
             val detailJob = async { container.repository.getRepoDetail(repo.owner, repo.name) }
-            val readmeJob = async { container.repository.getReadme(repo.owner, repo.name, currentRef) }
-            val entriesJob = async { container.repository.getDirectoryContents(repo.owner, repo.name, "", currentRef) }
+            val readmeJob = async { container.repository.getReadme(repo.owner, repo.name, resolvedRef) }
+            val entriesJob = async { container.repository.getDirectoryContents(repo.owner, repo.name, initialParent, resolvedRef) }
 
             detailJob.await().onSuccess {
                 detail = it
                 isStarred = it.summary.viewerHasStarred
-                currentRef = it.summary.defaultBranch
+                resolvedRef = it.summary.defaultBranch
+                currentRef = resolvedRef
             }
             readmeJob.await().onSuccess { readme = it }
             entriesJob.await().onSuccess { entries = it }
         }
-        isLoading = false
+        if (!initialFilePath.isNullOrBlank()) {
+            loadFile(initialFilePath, resolvedRef)
+        } else {
+            isLoading = false
+        }
 
         // Prefetch Open Issues & Open PRs in background so switching tabs is instant
         scope.launch {
