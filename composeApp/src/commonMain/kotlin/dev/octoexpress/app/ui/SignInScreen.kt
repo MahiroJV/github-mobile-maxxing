@@ -62,6 +62,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ShieldCheck
 import dev.octoexpress.auth.SessionManager
 import dev.octoexpress.auth.openUrlInBrowser
+import dev.octoexpress.model.AppBranding
 import dev.octoexpress.model.DeviceCodeState
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
@@ -137,7 +138,7 @@ fun SignInScreen(
                     Spacer(Modifier.height(16.dp))
 
                     Text(
-                        text = "OctoExpress",
+                        text = AppBranding.APP_NAME,
                         style = MaterialTheme.typography.displaySmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )

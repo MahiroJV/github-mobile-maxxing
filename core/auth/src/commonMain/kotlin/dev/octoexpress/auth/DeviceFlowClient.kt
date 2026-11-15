@@ -1,5 +1,6 @@
 package dev.octoexpress.auth
 
+import dev.octoexpress.model.AppBranding
 import dev.octoexpress.model.AuthMethod
 import dev.octoexpress.model.AuthSession
 import dev.octoexpress.model.DeviceCodeState
@@ -96,7 +97,7 @@ class DeviceFlowClient(
                 verificationUri = codeResponse.verificationUri,
                 expiresInSeconds = codeResponse.expiresIn,
                 intervalSeconds = intervalSec,
-                statusMessage = "Enter this code on GitHub to authorize OctoExpress."
+                statusMessage = "Enter this code on GitHub to authorize ${AppBranding.APP_NAME}."
             )
         )
 

@@ -4,6 +4,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import dev.octoexpress.model.AppBranding
 import java.awt.Dimension
 
 fun main() = application {
@@ -11,7 +12,7 @@ fun main() = application {
     Window(
         onCloseRequest = ::exitApplication,
         state = windowState,
-        title = "OctoExpress — GitHub Client"
+        title = "${AppBranding.APP_NAME} — GitHub Client"
     ) {
         window.minimumSize = Dimension(420, 600)
         OctoExpressApp()

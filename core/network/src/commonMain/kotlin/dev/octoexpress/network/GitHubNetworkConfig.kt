@@ -1,6 +1,7 @@
 package dev.octoexpress.network
 
 import dev.octoexpress.auth.SessionManager
+import dev.octoexpress.model.AppBranding
 import dev.octoexpress.model.RateLimitInfo
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.DefaultRequest
@@ -42,7 +43,7 @@ class GitHubNetworkConfig(
             }
             header(HttpHeaders.Accept, "application/vnd.github+json")
             header("X-GitHub-Api-Version", "2022-11-28")
-            header(HttpHeaders.UserAgent, "OctoExpress-KMP/1.0")
+            header(HttpHeaders.UserAgent, AppBranding.USER_AGENT)
         }
         HttpResponseValidator {
             validateResponse { response ->

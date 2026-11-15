@@ -1,5 +1,6 @@
 package dev.octoexpress.app.notifications
 
+import dev.octoexpress.model.AppBranding
 import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.network.NotificationMonitor
@@ -33,7 +34,7 @@ actual object PlatformNotifier {
 
     actual fun showTestNotification(): Boolean {
         return sendLinuxNotification(
-            title = "OctoExpress Test Notification",
+            title = "${AppBranding.APP_NAME} Test Notification",
             body = "Desktop notifications are active and working!",
             urgency = "normal"
         )
@@ -47,7 +48,7 @@ actual object PlatformNotifier {
         return runCatching {
             val pb = ProcessBuilder(
                 "notify-send",
-                "-a", "OctoExpress",
+                "-a", AppBranding.APP_NAME,
                 "-u", urgency,
                 "-i", "dialog-information",
                 "--",

@@ -88,11 +88,11 @@ compose.desktop {
         mainClass = "dev.octoexpress.app.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
-            packageName = "OctoExpress"
+            packageName = "github-mobile-maxxing"
             packageVersion = "1.0.0"
             description = "Fast Material 3 Expressive GitHub Client"
             linux {
-                packageName = "octoexpress"
+                packageName = "github-mobile-maxxing"
                 shortcut = true
             }
         }

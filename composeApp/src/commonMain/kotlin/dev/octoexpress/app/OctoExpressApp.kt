@@ -61,6 +61,7 @@ import dev.octoexpress.app.ui.ReposScreen
 import dev.octoexpress.app.ui.SettingsScreen
 import dev.octoexpress.app.ui.SignInScreen
 import dev.octoexpress.app.ui.UserProfileScreen
+import dev.octoexpress.model.AppBranding
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoPredictiveBackContainer
@@ -95,7 +96,7 @@ fun OctoExpressApp(
             followRedirects = true
         }.apply {
             plugin(HttpSend).intercept { request ->
-                request.headers.append(HttpHeaders.UserAgent, "OctoExpress-KMP/1.0")
+                request.headers.append(HttpHeaders.UserAgent, AppBranding.USER_AGENT)
                 val host = request.url.host.lowercase()
                 val isGitHubOwned = host == "raw.githubusercontent.com" ||
                     host == "github.com" ||
@@ -193,7 +194,7 @@ fun OctoExpressApp(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        OctoLoadingState(message = "Starting OctoExpress...")
+                        OctoLoadingState(message = "Starting ${AppBranding.APP_NAME}...")
                     }
                 }
             }

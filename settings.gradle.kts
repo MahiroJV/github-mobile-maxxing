@@ -1,4 +1,4 @@
-rootProject.name = "OctoExpress"
+rootProject.name = "github-mobile-maxxing"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {

@@ -22,6 +22,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.octoexpress.auth.AndroidAuthContextHolder
 import dev.octoexpress.auth.SessionManager
+import dev.octoexpress.model.AppBranding
 import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.network.GitHubRepository
@@ -117,7 +118,7 @@ actual object PlatformNotifier {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_URGENT)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle("OctoExpress Notifications Ready")
+            .setContentTitle("${AppBranding.APP_NAME} Notifications Ready")
             .setContentText("New mentions & review requests will appear here with Mark Read / Done actions.")
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

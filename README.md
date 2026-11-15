@@ -1,4 +1,4 @@
-# OctoExpress
+# github-mobile-maxxing
 
 A fast, custom **GitHub client** built with **Kotlin Multiplatform (KMP)** and **Compose Multiplatform**, targeting **Android** and **Linux Desktop**, powered by **Material 3 Expressive (MD3E)**.
 
