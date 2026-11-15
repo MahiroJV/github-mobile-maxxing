@@ -32,10 +32,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -65,6 +63,7 @@ import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
+import com.composables.icons.lucide.Star
 import com.composables.icons.lucide.Trash2
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.auth.openUrlInBrowser
@@ -74,13 +73,15 @@ import dev.octoexpress.model.GistSummary
 import dev.octoexpress.ui.components.CodeViewer
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
+import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.StarActionButton
 import dev.octoexpress.ui.components.UserAvatar
 import kotlinx.coroutines.launch
 
-private enum class GistsTab(val label: String) {
+internal enum class GistsTab(val label: String) {
     MINE("My Gists"),
     STARRED("Starred")
 }
@@ -255,15 +256,23 @@ fun GistsScreen(
                         OctoCollapsibleSection(visible = !headerTracker.isCollapsed) {
                             Column {
                                 Spacer(Modifier.height(6.dp))
-                                PrimaryTabRow(selectedTabIndex = activeTab.ordinal) {
-                                    GistsTab.entries.forEach { tab ->
-                                        Tab(
-                                            selected = activeTab == tab,
-                                            onClick = { activeTab = tab },
-                                            text = { Text(tab.label, maxLines = 1) }
-                                        )
-                                    }
-                                }
+                                OctoConnectedButtonGroup(
+                                    options = GistsTab.entries,
+                                    selected = activeTab,
+                                    onSelect = { activeTab = it },
+                                    labelProvider = { it.label },
+                                    iconProvider = { tab ->
+                                        when (tab) {
+                                            GistsTab.MINE -> Lucide.FileCode
+                                            GistsTab.STARRED -> if (activeTab == GistsTab.STARRED) {
+                                                OctoFilledIcons.Star
+                                            } else {
+                                                Lucide.Star
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
                     }
