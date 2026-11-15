@@ -103,6 +103,7 @@ fun IssuesPullsScreen(
     var isLoading by remember { mutableStateOf(items.isEmpty() && login.isNotBlank()) }
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var requestSeq by remember { mutableStateOf(0) }
 
     BackHandler(enabled = navigator.canNavigateBack()) {
         scope.launch { navigator.navigateBack() }
@@ -110,20 +111,24 @@ fun IssuesPullsScreen(
 
     fun loadItems(forceRefresh: Boolean = false) {
         if (login.isBlank()) return
+        val reqPreset = preset
+        val reqStateFilter = stateFilter
+        val seq = ++requestSeq
+        val cached = container.repository.peekMyIssuesAndPulls(reqPreset, login, reqStateFilter)
+        if (cached != null) {
+            items = cached
+            isLoading = false
+        } else {
+            items = emptyList()
+            isLoading = true
+        }
+        isRefreshing = forceRefresh
+        errorMsg = null
+
         scope.launch {
-            val cached = container.repository.peekMyIssuesAndPulls(preset, login, stateFilter)
-            if (cached != null) {
-                items = cached
-                isLoading = false
-            } else {
-                isLoading = true
-            }
-            if (forceRefresh) {
-                isRefreshing = true
-            }
-            errorMsg = null
-            container.repository.getMyIssuesAndPulls(preset, login, stateFilter, forceRefresh = forceRefresh)
+            container.repository.getMyIssuesAndPulls(reqPreset, login, reqStateFilter, forceRefresh = forceRefresh)
                 .onSuccess { loaded ->
+                    if (seq != requestSeq) return@onSuccess
                     items = loaded
                     isLoading = false
                     isRefreshing = false
@@ -132,6 +137,7 @@ fun IssuesPullsScreen(
                     )
                 }
                 .onFailure {
+                    if (seq != requestSeq) return@onFailure
                     val msg = it.message ?: "Failed to load issues and PRs"
                     errorMsg = msg
                     isLoading = false
@@ -140,6 +146,17 @@ fun IssuesPullsScreen(
                         onMessage(msg)
                     }
                 }
+        }
+
+        // Prefetch sibling filter presets for instant tab switching without affecting active UI state
+        IssueFilterPreset.entries.forEach { otherPreset ->
+            if (otherPreset != reqPreset &&
+                container.repository.peekMyIssuesAndPulls(otherPreset, login, reqStateFilter) == null
+            ) {
+                scope.launch {
+                    container.repository.getMyIssuesAndPulls(otherPreset, login, reqStateFilter, forceRefresh = false)
+                }
+            }
         }
     }
 

@@ -175,26 +175,30 @@ fun NotificationsScreen(
         container.prefetchIssuePullTargets(targets)
     }
 
-    fun loadNotifications(forceRefresh: Boolean = true, showRefreshFeedback: Boolean = false) {
-        scope.launch {
-            val cached = container.repository.peekNotifications(
-                all = filter == InboxFilter.ALL,
-                participating = filter == InboxFilter.PARTICIPATING
-            )
-            if (cached != null) {
-                threads = cached
-                isLoading = false
-            } else if (threads.isEmpty()) {
-                isLoading = true
-            }
-            if (forceRefresh) {
-                isRefreshing = true
-            }
-            errorMsg = null
+    var requestSeq by remember { mutableStateOf(0) }
 
-            if (filter == InboxFilter.UNREAD && forceRefresh) {
+    fun loadNotifications(forceRefresh: Boolean = true, showRefreshFeedback: Boolean = false) {
+        val reqFilter = filter
+        val seq = ++requestSeq
+        val cached = container.repository.peekNotifications(
+            all = reqFilter == InboxFilter.ALL,
+            participating = reqFilter == InboxFilter.PARTICIPATING
+        )
+        if (cached != null) {
+            threads = cached
+            isLoading = false
+        } else {
+            threads = emptyList()
+            isLoading = true
+        }
+        isRefreshing = forceRefresh && cached != null
+        errorMsg = null
+
+        scope.launch {
+            if (reqFilter == InboxFilter.UNREAD && forceRefresh) {
                 container.syncNotifications()
                     .onSuccess { check ->
+                        if (seq != requestSeq) return@onSuccess
                         threads = check.allUnread
                         isLoading = false
                         isRefreshing = false
@@ -206,6 +210,7 @@ fun NotificationsScreen(
                         }
                     }
                     .onFailure {
+                        if (seq != requestSeq) return@onFailure
                         val msg = it.message ?: "Failed to load notifications"
                         errorMsg = msg
                         isLoading = false
@@ -216,12 +221,13 @@ fun NotificationsScreen(
                     }
             } else {
                 container.repository.getNotifications(
-                    all = filter == InboxFilter.ALL,
-                    participating = filter == InboxFilter.PARTICIPATING,
+                    all = reqFilter == InboxFilter.ALL,
+                    participating = reqFilter == InboxFilter.PARTICIPATING,
                     forceRefresh = forceRefresh
                 ).onSuccess { loaded ->
+                    if (seq != requestSeq) return@onSuccess
                     threads = loaded
-                    if (filter == InboxFilter.UNREAD) {
+                    if (reqFilter == InboxFilter.UNREAD) {
                         container.updateUnreadThreads(loaded)
                     } else {
                         container.updateUnreadCount(loaded.count { it.unread })
@@ -233,6 +239,7 @@ fun NotificationsScreen(
                         onMessage("Synced ${loaded.size} notifications")
                     }
                 }.onFailure {
+                    if (seq != requestSeq) return@onFailure
                     val msg = it.message ?: "Failed to load notifications"
                     errorMsg = msg
                     isLoading = false

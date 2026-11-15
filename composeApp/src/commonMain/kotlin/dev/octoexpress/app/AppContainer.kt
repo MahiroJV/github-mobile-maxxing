@@ -77,22 +77,36 @@ class AppContainer {
 
     fun warmUpWorkspace(login: String?) {
         backgroundScope.launch {
+            // 1. Inbox tabs (Unread, All, Participating)
+            launch { repository.getNotifications(all = false, participating = false, forceRefresh = false) }
             launch { repository.getNotifications(all = true, participating = false, forceRefresh = false) }
+            launch { repository.getNotifications(all = false, participating = true, forceRefresh = false) }
+            // 2. Repos tabs (My Repos, Starred, Explore Trending)
             launch { repository.getViewerRepositories(forceRefresh = false) }
             launch { repository.getStarredRepositories(forceRefresh = false) }
+            launch { repository.getTrendingRepositories(language = null, forceRefresh = false) }
             if (!login.isNullOrBlank()) {
+                // 3. Home feed tabs + Profile
                 launch { repository.getContributionCalendar(login, forceRefresh = false) }
                 launch { repository.getReceivedEvents(login, forceRefresh = false) }
-                launch {
-                    repository.getMyIssuesAndPulls(
-                        preset = IssueFilterPreset.CREATED,
-                        viewerLogin = login,
-                        stateFilter = IssueStateFilter.OPEN,
-                        forceRefresh = false
-                    ).onSuccess { list ->
-                        prefetchIssuePullTargets(
-                            list.take(3).map { IssuePullTarget(it.repoOwner, it.repoName, it.number, it.title) }
-                        )
+                launch { repository.getUserEvents(login, forceRefresh = false) }
+                launch { repository.getUserProfile(login, forceRefresh = false) }
+                launch { repository.getUserOrganizations(login, forceRefresh = false) }
+                // 4. Issues & PRs presets (Created, Assigned, Review Requested, Mentioned)
+                IssueFilterPreset.entries.forEach { preset ->
+                    launch {
+                        repository.getMyIssuesAndPulls(
+                            preset = preset,
+                            viewerLogin = login,
+                            stateFilter = IssueStateFilter.OPEN,
+                            forceRefresh = false
+                        ).onSuccess { list ->
+                            if (preset == IssueFilterPreset.CREATED) {
+                                prefetchIssuePullTargets(
+                                    list.take(3).map { IssuePullTarget(it.repoOwner, it.repoName, it.number, it.title) }
+                                )
+                            }
+                        }
                     }
                 }
             }

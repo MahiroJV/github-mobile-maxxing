@@ -199,48 +199,56 @@ private fun HomeDashboardPane(
     var isLoading by remember { mutableStateOf(feedEvents.isEmpty() && calendar == null && login.isNotBlank()) }
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var requestSeq by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     fun loadHome(forceRefresh: Boolean = false) {
         if (login.isBlank()) return
-        scope.launch {
-            val cachedCal = container.repository.peekContributionCalendar(login)
-            val cachedRepos = container.repository.peekViewerRepositories()
-            val cachedFeed = when (feedTab) {
-                FeedTab.FOLLOWING -> container.repository.peekReceivedEvents(login)
-                FeedTab.MY_ACTIVITY -> container.repository.peekUserEvents(login)
-            }
-            if (cachedCal != null) calendar = cachedCal
-            if (cachedRepos != null) recentRepos = cachedRepos
-            if (cachedFeed != null) {
-                feedEvents = cachedFeed
-                isLoading = false
-            } else if (feedEvents.isEmpty()) {
-                isLoading = true
-            }
-            if (forceRefresh) isRefreshing = true
-            errorMsg = null
+        val reqTab = feedTab
+        val seq = ++requestSeq
+        val cachedCal = container.repository.peekContributionCalendar(login)
+        val cachedRepos = container.repository.peekViewerRepositories()
+        val cachedFeed = when (reqTab) {
+            FeedTab.FOLLOWING -> container.repository.peekReceivedEvents(login)
+            FeedTab.MY_ACTIVITY -> container.repository.peekUserEvents(login)
+        }
+        if (cachedCal != null) calendar = cachedCal
+        if (cachedRepos != null) recentRepos = cachedRepos
+        if (cachedFeed != null) {
+            feedEvents = cachedFeed
+            isLoading = false
+        } else {
+            feedEvents = emptyList()
+            isLoading = true
+        }
+        isRefreshing = forceRefresh
+        errorMsg = null
 
+        scope.launch {
             coroutineScope {
                 val calJob = async { container.repository.getContributionCalendar(login, forceRefresh = forceRefresh) }
                 val reposJob = async { container.repository.getViewerRepositories(forceRefresh = forceRefresh) }
                 val feedJob = async {
-                    when (feedTab) {
+                    when (reqTab) {
                         FeedTab.FOLLOWING -> container.repository.getReceivedEvents(login, forceRefresh = forceRefresh)
                         FeedTab.MY_ACTIVITY -> container.repository.getUserEvents(login, forceRefresh = forceRefresh)
                     }
                 }
-                calJob.await().onSuccess { calendar = it }
-                reposJob.await().onSuccess { recentRepos = it }
+                calJob.await().onSuccess { if (seq == requestSeq) calendar = it }
+                reposJob.await().onSuccess { if (seq == requestSeq) recentRepos = it }
                 feedJob.await()
-                    .onSuccess { feedEvents = it }
+                    .onSuccess { if (seq == requestSeq) feedEvents = it }
                     .onFailure {
-                        errorMsg = it.message ?: "Failed to load activity feed"
-                        if (forceRefresh) onMessage(errorMsg!!)
+                        if (seq == requestSeq) {
+                            errorMsg = it.message ?: "Failed to load activity feed"
+                            if (forceRefresh) onMessage(errorMsg!!)
+                        }
                     }
             }
-            isLoading = false
-            isRefreshing = false
+            if (seq == requestSeq) {
+                isLoading = false
+                isRefreshing = false
+            }
         }
     }
 
