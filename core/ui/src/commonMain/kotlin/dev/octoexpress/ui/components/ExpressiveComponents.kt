@@ -2,10 +2,12 @@ package dev.octoexpress.ui.components
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -15,18 +17,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SplitButtonDefaults
 import androidx.compose.material3.SplitButtonLayout
 import androidx.compose.material3.Surface
@@ -43,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -58,6 +64,9 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Star
+import com.composables.icons.lucide.UserCheck
+import com.composables.icons.lucide.UserPlus
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -358,6 +367,114 @@ fun ExpressiveStatusPill(
             )
         }
     }
+}
+
+val OctoStarAmber = Color(0xFFF59E0B)
+
+/**
+ * Icon-first Star / Starred toggle button:
+ * solid golden star + warm tinted pill when starred vs hollow outline star when unstarred.
+ */
+@Composable
+fun StarActionButton(
+    isStarred: Boolean,
+    count: Int? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isLight = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    val countSuffix = count?.let { " ${formatCompactCount(it)}" }.orEmpty()
+    if (isStarred) {
+        val container = if (isLight) Color(0xFFFEF3C7) else Color(0xFF453208)
+        val content = if (isLight) Color(0xFF92400E) else Color(0xFFFCD34D)
+        val starTint = if (isLight) Color(0xFFD97706) else Color(0xFFFBBF24)
+        FilledTonalButton(
+            onClick = onClick,
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = container,
+                contentColor = content
+            ),
+            modifier = modifier
+        ) {
+            Icon(
+                imageVector = OctoFilledIcons.Star,
+                contentDescription = "Starred",
+                tint = starTint,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                text = "Starred$countSuffix",
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = modifier
+        ) {
+            Icon(
+                imageVector = Lucide.Star,
+                contentDescription = "Star",
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                text = "Star$countSuffix",
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+/**
+ * Icon-first Follow / Following toggle button.
+ */
+@Composable
+fun FollowActionButton(
+    isFollowing: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (isFollowing) {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            modifier = modifier
+        ) {
+            Icon(Lucide.UserCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Following", maxLines = 1, softWrap = false)
+        }
+    } else {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            modifier = modifier
+        ) {
+            Icon(Lucide.UserPlus, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Follow", maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+fun formatCompactCount(count: Int): String = when {
+    count >= 1_000_000 -> "${(count / 100_000) / 10.0}M".replace(".0M", "M")
+    count >= 1_000 -> "${(count / 100) / 10.0}k".replace(".0k", "k")
+    else -> count.toString()
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

@@ -49,10 +49,14 @@ import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
+import com.composables.icons.lucide.GitMerge
 import com.composables.icons.lucide.GitPullRequest
+import com.composables.icons.lucide.Layers
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MessageSquare
+import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.RefreshCw
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
@@ -190,6 +194,17 @@ fun IssuesPullsScreen(
                                 FilterChip(
                                     selected = stateFilter == sf,
                                     onClick = { stateFilter = sf },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = when (sf) {
+                                                IssueStateFilter.OPEN -> Lucide.CircleDot
+                                                IssueStateFilter.CLOSED -> Lucide.CircleCheck
+                                                IssueStateFilter.ALL -> Lucide.Layers
+                                            },
+                                            contentDescription = null,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    },
                                     label = { Text(sf.label) }
                                 )
                             }
@@ -349,7 +364,13 @@ fun IssuePullSummaryCard(
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = if (item.kind == IssueOrPullKind.PULL_REQUEST) Lucide.GitPullRequest else Lucide.CircleDot,
+                    imageVector = when {
+                        item.isDraft -> Lucide.Pencil
+                        item.kind == IssueOrPullKind.PULL_REQUEST && item.state == IssueOrPullState.MERGED -> Lucide.GitMerge
+                        item.kind == IssueOrPullKind.PULL_REQUEST -> Lucide.GitPullRequest
+                        item.state == IssueOrPullState.CLOSED -> Lucide.CircleCheck
+                        else -> Lucide.CircleDot
+                    },
                     contentDescription = null,
                     tint = stateColor,
                     modifier = Modifier.size(16.dp)

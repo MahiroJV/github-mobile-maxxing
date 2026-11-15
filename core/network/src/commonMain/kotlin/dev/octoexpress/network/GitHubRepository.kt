@@ -539,6 +539,9 @@ class GitHubRepository(
     }.onSuccess {
         repoDetailCache.invalidate(RepoKey(owner, repo))
         viewerReposCache.invalidate("STARRED")
+        viewerReposCache.invalidate("MY")
+        searchReposCache.clear()
+        trendingReposCache.clear()
     }
 
     suspend fun getContributionCalendar(

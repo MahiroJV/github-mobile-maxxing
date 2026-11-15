@@ -68,6 +68,7 @@ import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
 import dev.octoexpress.ui.components.ExpressiveStatusPill
+import dev.octoexpress.ui.components.FollowActionButton
 import dev.octoexpress.ui.components.OctoConnectedButtonGroup
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
@@ -287,43 +288,23 @@ fun UserProfileScreen(
                                             )
                                         }
                                         if (!isSelf && !p.isOrganization) {
-                                            if (isFollowing) {
-                                                OutlinedButton(
-                                                    onClick = {
-                                                        isFollowing = false
-                                                        scope.launch {
-                                                            container.repository.setFollowingUser(p.login, false)
-                                                                .onSuccess { onMessage("Unfollowed @${p.login}") }
-                                                                .onFailure {
-                                                                    isFollowing = true
-                                                                    onMessage(it.message ?: "Follow update failed")
-                                                                }
-                                                        }
+                                            FollowActionButton(
+                                                isFollowing = isFollowing,
+                                                onClick = {
+                                                    val next = !isFollowing
+                                                    isFollowing = next
+                                                    scope.launch {
+                                                        container.repository.setFollowingUser(p.login, next)
+                                                            .onSuccess {
+                                                                onMessage(if (next) "Following @${p.login}" else "Unfollowed @${p.login}")
+                                                            }
+                                                            .onFailure {
+                                                                isFollowing = !next
+                                                                onMessage(it.message ?: "Follow update failed")
+                                                            }
                                                     }
-                                                ) {
-                                                    Icon(Lucide.UserCheck, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text("Following")
                                                 }
-                                            } else {
-                                                FilledTonalButton(
-                                                    onClick = {
-                                                        isFollowing = true
-                                                        scope.launch {
-                                                            container.repository.setFollowingUser(p.login, true)
-                                                                .onSuccess { onMessage("Following @${p.login}") }
-                                                                .onFailure {
-                                                                    isFollowing = false
-                                                                    onMessage(it.message ?: "Follow update failed")
-                                                                }
-                                                        }
-                                                    }
-                                                ) {
-                                                    Icon(Lucide.UserPlus, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text("Follow")
-                                                }
-                                            }
+                                            )
                                         }
                                     }
 

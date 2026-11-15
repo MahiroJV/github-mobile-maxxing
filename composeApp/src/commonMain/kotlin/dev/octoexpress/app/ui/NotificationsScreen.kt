@@ -640,6 +640,13 @@ private fun NotificationThreadCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (thread.unread) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            modifier = Modifier.size(8.dp)
+                        ) {}
+                    }
                     Icon(
                         imageVector = icon,
                         contentDescription = null,

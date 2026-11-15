@@ -63,21 +63,27 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
+import com.composables.icons.lucide.Compass
 import com.composables.icons.lucide.File
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Flame
 import com.composables.icons.lucide.Folder
+import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.GitBranch
 import com.composables.icons.lucide.GitFork
+import com.composables.icons.lucide.GitMerge
 import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
@@ -102,10 +108,14 @@ import dev.octoexpress.ui.components.CodeViewer
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
 import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoStarAmber
 import dev.octoexpress.ui.components.OctoWavyProgress
+import dev.octoexpress.ui.components.StarActionButton
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
+import dev.octoexpress.ui.components.formatCompactCount
 import dev.octoexpress.ui.components.parseHexColor
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -370,7 +380,14 @@ private fun RepoListPane(
                 options = RepoListTab.entries,
                 selected = activeTab,
                 onSelect = { activeTab = it },
-                labelProvider = { if (it == RepoListTab.SEARCH) "Explore / Search" else it.label },
+                labelProvider = { if (it == RepoListTab.SEARCH) "Explore" else it.label },
+                iconProvider = {
+                    when (it) {
+                        RepoListTab.MINE -> Lucide.FolderGit2
+                        RepoListTab.STARRED -> OctoFilledIcons.Star
+                        RepoListTab.SEARCH -> Lucide.Compass
+                    }
+                },
                 modifier = Modifier.fillMaxWidth()
             )
             if (activeTab == RepoListTab.SEARCH) {
@@ -380,6 +397,14 @@ private fun RepoListPane(
                     selected = searchKind,
                     onSelect = { searchKind = it },
                     labelProvider = { it.label },
+                    iconProvider = {
+                        when (it) {
+                            GlobalSearchKind.REPOSITORIES -> Lucide.Folder
+                            GlobalSearchKind.ISSUES_PRS -> Lucide.CircleDot
+                            GlobalSearchKind.CODE -> Lucide.FileCode
+                            GlobalSearchKind.USERS -> Lucide.Users
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
@@ -653,6 +678,13 @@ private fun SearchIssuePullCard(
                         item.state == IssueOrPullState.MERGED -> "Merged"
                         else -> "Closed"
                     },
+                    icon = when {
+                        item.isDraft -> Lucide.Pencil
+                        item.state == IssueOrPullState.MERGED -> Lucide.GitMerge
+                        item.state == IssueOrPullState.CLOSED -> Lucide.CircleCheck
+                        item.kind == IssueOrPullKind.PULL_REQUEST -> Lucide.GitPullRequest
+                        else -> Lucide.CircleDot
+                    },
                     containerColor = if (item.state == IssueOrPullState.OPEN) {
                         MaterialTheme.colorScheme.primaryContainer
                     } else {
@@ -834,14 +866,24 @@ fun RepoSummaryCard(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Lucide.Star, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Icon(
+                        imageVector = if (repo.viewerHasStarred) OctoFilledIcons.Star else Lucide.Star,
+                        contentDescription = if (repo.viewerHasStarred) "Starred" else "Stars",
+                        tint = if (repo.viewerHasStarred) OctoStarAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Text(repo.stargazersCount.toString(), style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        text = formatCompactCount(repo.stargazersCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (repo.viewerHasStarred) FontWeight.Bold else FontWeight.Medium,
+                        color = if (repo.viewerHasStarred) OctoStarAmber else MaterialTheme.colorScheme.onSurface
+                    )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Lucide.GitFork, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(repo.forksCount.toString(), style = MaterialTheme.typography.labelMedium)
+                    Text(formatCompactCount(repo.forksCount), style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -1069,21 +1111,22 @@ fun RepoDetailScreen(
                             .weight(1f)
                             .clickable(enabled = repo.owner.isNotBlank()) { onOpenUser(repo.owner) }
                     )
-                    FilledTonalButton(
+                    StarActionButton(
+                        isStarred = isStarred,
+                        count = (detail?.summary?.stargazersCount ?: repo.stargazersCount).let { base ->
+                            if (isStarred == (detail?.summary?.viewerHasStarred ?: repo.viewerHasStarred)) base
+                            else if (isStarred) base + 1 else (base - 1).coerceAtLeast(0)
+                        },
                         onClick = {
                             val next = !isStarred
                             isStarred = next
                             scope.launch {
                                 container.repository.setStarred(repo.owner, repo.name, next)
-                                    .onSuccess { onMessage(if (next) "Starred" else "Unstarred") }
+                                    .onSuccess { onMessage(if (next) "Starred ${repo.fullName}" else "Unstarred ${repo.fullName}") }
                                     .onFailure { isStarred = !next }
                             }
                         }
-                    ) {
-                        Icon(Lucide.Star, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (isStarred) "Starred" else "Star")
-                    }
+                    )
                     Spacer(Modifier.width(8.dp))
                     FilledTonalButton(onClick = { showCreateIssueDialog = true }) {
                         Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
