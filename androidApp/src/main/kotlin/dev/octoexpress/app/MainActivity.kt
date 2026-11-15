@@ -3,6 +3,7 @@ package dev.octoexpress.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color as AndroidColor
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -14,10 +15,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import dev.octoexpress.app.notifications.PlatformNotifier
 import dev.octoexpress.auth.AndroidAuthContextHolder
 
@@ -29,9 +33,15 @@ class MainActivity : ComponentActivity() {
     ) { /* Permission result handled gracefully by PlatformNotifier */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val initialBarStyle = if (systemDark) {
+            SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+        } else {
+            SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+        }
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+            statusBarStyle = initialBarStyle,
+            navigationBarStyle = initialBarStyle
         )
         super.onCreate(savedInstanceState)
         enableMaxRefreshRate()
@@ -41,7 +51,19 @@ class MainActivity : ComponentActivity() {
         deepLinkTarget = parseDeepLink(intent)
 
         setContent {
-            var isDarkTheme by mutableStateOf(false)
+            var isDarkTheme by mutableStateOf(systemDark)
+            val view = LocalView.current
+
+            SideEffect {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !isDarkTheme
+                controller.isAppearanceLightNavigationBars = !isDarkTheme
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isStatusBarContrastEnforced = false
+                    window.isNavigationBarContrastEnforced = false
+                }
+            }
+
             LaunchedEffect(isDarkTheme) {
                 val barStyle = if (isDarkTheme) {
                     SystemBarStyle.dark(AndroidColor.TRANSPARENT)
