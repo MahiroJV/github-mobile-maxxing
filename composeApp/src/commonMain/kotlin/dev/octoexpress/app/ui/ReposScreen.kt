@@ -50,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -150,7 +151,7 @@ import dev.octoexpress.model.WorkflowSummary
 import dev.octoexpress.ui.components.CodeViewer
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoStarAmber
@@ -445,37 +446,59 @@ private fun RepoListPane(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            OctoConnectedButtonGroup(
-                options = RepoListTab.entries,
-                selected = activeTab,
-                onSelect = { activeTab = it },
-                labelProvider = { if (it == RepoListTab.SEARCH) "Explore" else it.label },
-                iconProvider = {
-                    when (it) {
+            PrimaryTabRow(
+                selectedTabIndex = RepoListTab.entries.indexOf(activeTab).coerceAtLeast(0),
+                containerColor = androidx.compose.ui.graphics.Color.Transparent
+            ) {
+                RepoListTab.entries.forEach { tab ->
+                    val label = if (tab == RepoListTab.SEARCH) "Explore" else tab.label
+                    val icon = when (tab) {
                         RepoListTab.MINE -> Lucide.FolderGit2
                         RepoListTab.STARRED -> OctoFilledIcons.Star
                         RepoListTab.SEARCH -> Lucide.Compass
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
+                    Tab(
+                        selected = activeTab == tab,
+                        onClick = { activeTab = tab },
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Text(label, maxLines = 1, softWrap = false)
+                            }
+                        }
+                    )
+                }
+            }
             if (activeTab == RepoListTab.SEARCH) {
                 Spacer(Modifier.height(10.dp))
-                OctoConnectedButtonGroup(
-                    options = GlobalSearchKind.entries,
-                    selected = searchKind,
-                    onSelect = { searchKind = it },
-                    labelProvider = { it.label },
-                    iconProvider = {
-                        when (it) {
-                            GlobalSearchKind.REPOSITORIES -> Lucide.Folder
-                            GlobalSearchKind.ISSUES_PRS -> Lucide.CircleDot
-                            GlobalSearchKind.CODE -> Lucide.FileCode
-                            GlobalSearchKind.USERS -> Lucide.Users
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Search in",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OctoDropdownSelector(
+                        options = GlobalSearchKind.entries,
+                        selected = searchKind,
+                        onSelect = { searchKind = it },
+                        labelProvider = { it.label },
+                        iconProvider = {
+                            when (it) {
+                                GlobalSearchKind.REPOSITORIES -> Lucide.Folder
+                                GlobalSearchKind.ISSUES_PRS -> Lucide.CircleDot
+                                GlobalSearchKind.CODE -> Lucide.FileCode
+                                GlobalSearchKind.USERS -> Lucide.Users
+                            }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2588,13 +2611,19 @@ fun RepoDetailScreen(
             title = { Text("${repo.name} Network") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OctoConnectedButtonGroup(
-                        options = RepoPeopleTab.entries,
-                        selected = peopleTab,
-                        onSelect = { openPeopleTab(it) },
-                        labelProvider = { it.label },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    PrimaryScrollableTabRow(
+                        selectedTabIndex = RepoPeopleTab.entries.indexOf(peopleTab).coerceAtLeast(0),
+                        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                        edgePadding = 0.dp
+                    ) {
+                        RepoPeopleTab.entries.forEach { tab ->
+                            Tab(
+                                selected = peopleTab == tab,
+                                onClick = { openPeopleTab(tab) },
+                                text = { Text(tab.label, maxLines = 1, softWrap = false) }
+                            )
+                        }
+                    }
                     if (peopleLoading) {
                         OctoWavyProgress()
                     }

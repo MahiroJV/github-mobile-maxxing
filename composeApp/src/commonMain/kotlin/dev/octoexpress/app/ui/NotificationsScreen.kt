@@ -79,7 +79,7 @@ import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationSubjectType
 import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.ui.components.ExpressiveStatusPill
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFloatingToolbar
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
@@ -291,27 +291,27 @@ fun NotificationsScreen(
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Inbox",
-                                    style = MaterialTheme.typography.headlineMedium
-                                )
-                                Text(
-                                    text = "${visibleThreads.size} / ${threads.size} threads",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Inbox",
+                                        style = MaterialTheme.typography.headlineMedium
+                                    )
+                                    Text(
+                                        text = "${visibleThreads.size} / ${threads.size} threads",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                OctoDropdownSelector(
+                                    options = InboxFilter.entries,
+                                    selected = filter,
+                                    onSelect = { filter = it },
+                                    labelProvider = { it.label }
                                 )
                             }
-                            Spacer(Modifier.height(10.dp))
-                            OctoConnectedButtonGroup(
-                                options = InboxFilter.entries,
-                                selected = filter,
-                                onSelect = { filter = it },
-                                labelProvider = { it.label },
-                                modifier = Modifier.fillMaxWidth()
-                            )
 
                             Spacer(Modifier.height(8.dp))
                             Row(

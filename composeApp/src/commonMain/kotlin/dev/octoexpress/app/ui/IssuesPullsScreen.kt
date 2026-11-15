@@ -67,7 +67,7 @@ import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubLabelChip
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
@@ -173,33 +173,32 @@ fun IssuesPullsScreen(
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
                                 text = "Issues & PRs",
                                 style = MaterialTheme.typography.headlineMedium,
+                                maxLines = 1,
                                 modifier = Modifier.weight(1f)
+                            )
+                            OctoDropdownSelector(
+                                options = IssueFilterPreset.entries,
+                                selected = preset,
+                                onSelect = { preset = it },
+                                labelProvider = {
+                                    when (it) {
+                                        IssueFilterPreset.CREATED -> "Created"
+                                        IssueFilterPreset.ASSIGNED -> "Assigned"
+                                        IssueFilterPreset.REVIEW_REQUESTED -> "Reviews"
+                                        IssueFilterPreset.MENTIONED -> "Mentioned"
+                                    }
+                                }
                             )
                             IconButton(onClick = { loadItems(forceRefresh = true) }) {
                                 Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
                             }
                         }
-
-                        Spacer(Modifier.height(10.dp))
-                        OctoConnectedButtonGroup(
-                            options = IssueFilterPreset.entries,
-                            selected = preset,
-                            onSelect = { preset = it },
-                            labelProvider = {
-                                when (it) {
-                                    IssueFilterPreset.CREATED -> "Created"
-                                    IssueFilterPreset.ASSIGNED -> "Assigned"
-                                    IssueFilterPreset.REVIEW_REQUESTED -> "Reviews"
-                                    IssueFilterPreset.MENTIONED -> "Mentioned"
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
 
                         Spacer(Modifier.height(8.dp))
                         Row(

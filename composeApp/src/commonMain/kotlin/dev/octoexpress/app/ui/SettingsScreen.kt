@@ -49,7 +49,7 @@ import com.composables.icons.lucide.Palette
 import com.composables.icons.lucide.Shield
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.notifications.PlatformNotifier
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.theme.OctoSeedPresets
@@ -257,23 +257,32 @@ fun SettingsScreen(
                         )
                     }
 
-                    Text("Foreground Sync Interval", style = MaterialTheme.typography.labelLarge)
                     val currentPoll = PollIntervalOption.entries.firstOrNull {
                         it.minutes == notifPrefs.pollIntervalMinutes
                     } ?: PollIntervalOption.FIVE
-                    OctoConnectedButtonGroup(
-                        options = PollIntervalOption.entries,
-                        selected = currentPoll,
-                        onSelect = { opt ->
-                            scope.launch {
-                                container.sessionManager.updateNotificationPreferences(
-                                    notifPrefs.copy(pollIntervalMinutes = opt.minutes)
-                                )
-                            }
-                        },
-                        labelProvider = { it.label },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Foreground Sync Interval",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OctoDropdownSelector(
+                            options = PollIntervalOption.entries,
+                            selected = currentPoll,
+                            onSelect = { opt ->
+                                scope.launch {
+                                    container.sessionManager.updateNotificationPreferences(
+                                        notifPrefs.copy(pollIntervalMinutes = opt.minutes)
+                                    )
+                                }
+                            },
+                            labelProvider = { it.label }
+                        )
+                    }
 
                     FilledTonalButton(
                         onClick = {
@@ -308,19 +317,29 @@ fun SettingsScreen(
                     Spacer(Modifier.height(16.dp))
 
                     val currentMode = DarkModeOption.entries.first { it.value == themePrefs.darkModeOverride }
-                    OctoConnectedButtonGroup(
-                        options = DarkModeOption.entries,
-                        selected = currentMode,
-                        onSelect = { opt ->
-                            scope.launch {
-                                container.sessionManager.updateThemePreferences(
-                                    themePrefs.copy(darkModeOverride = opt.value)
-                                )
-                            }
-                        },
-                        labelProvider = { it.label },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Appearance",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OctoDropdownSelector(
+                            options = DarkModeOption.entries,
+                            selected = currentMode,
+                            onSelect = { opt ->
+                                scope.launch {
+                                    container.sessionManager.updateThemePreferences(
+                                        themePrefs.copy(darkModeOverride = opt.value)
+                                    )
+                                }
+                            },
+                            labelProvider = { it.label }
+                        )
+                    }
 
                     Spacer(Modifier.height(16.dp))
                     Text("Expressive Seed Accent (SPEC_2025)", style = MaterialTheme.typography.labelLarge)

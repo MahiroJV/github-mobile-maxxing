@@ -31,7 +31,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -46,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,7 +78,6 @@ import dev.octoexpress.model.UserSummary
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.FollowActionButton
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
@@ -410,22 +412,35 @@ fun UserProfileScreen(
                             } else {
                                 ProfileTab.entries
                             }
-                            OctoConnectedButtonGroup(
-                                options = visibleTabs,
-                                selected = if (activeTab in visibleTabs) activeTab else ProfileTab.REPOS,
-                                onSelect = { activeTab = it },
-                                labelProvider = { it.label },
-                                iconProvider = { tab ->
-                                    when (tab) {
+                            val currentTab = if (activeTab in visibleTabs) activeTab else ProfileTab.REPOS
+                            PrimaryScrollableTabRow(
+                                selectedTabIndex = visibleTabs.indexOf(currentTab).coerceAtLeast(0),
+                                containerColor = Color.Transparent,
+                                edgePadding = 0.dp
+                            ) {
+                                visibleTabs.forEach { tab ->
+                                    val icon = when (tab) {
                                         ProfileTab.REPOS -> Lucide.Folder
                                         ProfileTab.STARRED -> OctoFilledIcons.Star
                                         ProfileTab.ACTIVITY -> Lucide.Activity
                                         ProfileTab.FOLLOWERS -> Lucide.Users
                                         ProfileTab.FOLLOWING -> Lucide.UserCheck
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                                    Tab(
+                                        selected = currentTab == tab,
+                                        onClick = { activeTab = tab },
+                                        text = {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                                                Text(tab.label, maxLines = 1, softWrap = false)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
 
                         when (activeTab) {

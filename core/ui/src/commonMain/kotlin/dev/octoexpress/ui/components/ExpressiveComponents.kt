@@ -62,6 +62,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Star
@@ -157,6 +158,7 @@ fun <T> OctoConnectedButtonGroup(
                 checked = isSelected,
                 onCheckedChange = { onSelect(option) },
                 shapes = shapes,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                 modifier = Modifier
                     .weight(1f)
                     .semantics { role = Role.RadioButton }
@@ -166,14 +168,72 @@ fun <T> OctoConnectedButtonGroup(
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        modifier = Modifier.size(ToggleButtonDefaults.IconSize)
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(Modifier.size(ToggleButtonDefaults.IconSpacing))
+                    Spacer(Modifier.width(5.dp))
                 }
                 Text(
                     text = labelProvider(option),
                     maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Compact pull-down selector designed to align cleanly to the right side of headers
+ * so narrow viewports never truncate connected pill labels to "[icon]...".
+ */
+@Composable
+fun <T> OctoDropdownSelector(
+    options: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    labelProvider: (T) -> String,
+    modifier: Modifier = Modifier,
+    iconProvider: ((T) -> ImageVector?)? = null
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedIcon = iconProvider?.invoke(selected)
+    Box(modifier = modifier) {
+        FilledTonalButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            if (selectedIcon != null) {
+                Icon(selectedIcon, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = labelProvider(selected),
+                maxLines = 1,
+                softWrap = false
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(Lucide.ChevronDown, contentDescription = "Select option", modifier = Modifier.size(15.dp))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                val isSelected = option == selected
+                val optIcon = iconProvider?.invoke(option)
+                DropdownMenuItem(
+                    leadingIcon = optIcon?.let { icon ->
+                        { Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    },
+                    text = { Text(labelProvider(option), maxLines = 1, softWrap = false) },
+                    trailingIcon = if (isSelected) {
+                        { Icon(Lucide.Check, contentDescription = "Selected", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }
+                    } else null,
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    }
                 )
             }
         }

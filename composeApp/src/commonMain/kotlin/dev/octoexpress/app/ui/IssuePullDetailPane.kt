@@ -39,8 +39,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -96,7 +98,7 @@ import dev.octoexpress.model.UserSummary
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubLabelChip
 import dev.octoexpress.ui.components.GitHubMarkdown
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFloatingToolbar
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoSplitActionButton
@@ -284,26 +286,37 @@ fun IssuePullDetailPane(
                                         checksLoading = false
                                     }
                                 }
-                                OctoConnectedButtonGroup(
-                                    options = DetailTab.entries,
-                                    selected = selectedTab,
-                                    onSelect = { selectedTab = it },
-                                    labelProvider = { tab ->
-                                        when (tab) {
+                                PrimaryScrollableTabRow(
+                                    selectedTabIndex = DetailTab.entries.indexOf(selectedTab).coerceAtLeast(0),
+                                    containerColor = Color.Transparent,
+                                    edgePadding = 0.dp
+                                ) {
+                                    DetailTab.entries.forEach { tab ->
+                                        val label = when (tab) {
                                             DetailTab.FILES -> "${tab.label} (${item.changedFilesCount})"
                                             DetailTab.CHECKS -> checkRuns?.let { "${tab.label} (${it.size})" } ?: tab.label
                                             DetailTab.CONVERSATION -> tab.label
                                         }
-                                    },
-                                    iconProvider = { tab ->
-                                        when (tab) {
+                                        val icon = when (tab) {
                                             DetailTab.CONVERSATION -> Lucide.MessageSquare
                                             DetailTab.CHECKS -> Lucide.CircleCheck
                                             DetailTab.FILES -> Lucide.FileDiff
                                         }
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                        Tab(
+                                            selected = selectedTab == tab,
+                                            onClick = { selectedTab = tab },
+                                            text = {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                                                    Text(label, maxLines = 1, softWrap = false)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -842,13 +855,19 @@ fun IssuePullDetailPane(
             title = { Text("Submit PR Review") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OctoConnectedButtonGroup(
-                        options = ReviewEvent.entries,
-                        selected = reviewEvent,
-                        onSelect = { reviewEvent = it },
-                        labelProvider = { it.displayLabel },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Decision", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                        OctoDropdownSelector(
+                            options = ReviewEvent.entries,
+                            selected = reviewEvent,
+                            onSelect = { reviewEvent = it },
+                            labelProvider = { it.displayLabel }
+                        )
+                    }
                     OutlinedTextField(
                         value = reviewBody,
                         onValueChange = { reviewBody = it },

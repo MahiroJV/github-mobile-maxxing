@@ -26,10 +26,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -61,7 +63,6 @@ import com.composables.icons.lucide.ShieldCheck
 import dev.octoexpress.auth.SessionManager
 import dev.octoexpress.auth.openUrlInBrowser
 import dev.octoexpress.model.DeviceCodeState
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -150,13 +151,18 @@ fun SignInScreen(
 
                     Spacer(Modifier.height(22.dp))
 
-                    OctoConnectedButtonGroup(
-                        options = SignInTab.entries,
-                        selected = selectedTab,
-                        onSelect = { selectedTab = it },
-                        labelProvider = { it.label },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    PrimaryTabRow(
+                        selectedTabIndex = SignInTab.entries.indexOf(selectedTab).coerceAtLeast(0),
+                        containerColor = androidx.compose.ui.graphics.Color.Transparent
+                    ) {
+                        SignInTab.entries.forEach { tab ->
+                            Tab(
+                                selected = selectedTab == tab,
+                                onClick = { selectedTab = tab },
+                                text = { Text(tab.label, maxLines = 1, softWrap = false) }
+                            )
+                        }
+                    }
 
                     Spacer(Modifier.height(22.dp))
 

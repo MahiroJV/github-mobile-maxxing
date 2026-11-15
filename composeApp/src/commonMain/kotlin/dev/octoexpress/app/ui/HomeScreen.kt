@@ -81,7 +81,7 @@ import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.ActivityEventKind
 import dev.octoexpress.model.ContributionCalendar
 import dev.octoexpress.model.RepoSummary
-import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
@@ -516,23 +516,26 @@ private fun HomeDashboardPane(
                     }
 
                     item(key = "feed_header", contentType = "feed_header") {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(Lucide.Activity, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                                Text("Activity Feed", style = MaterialTheme.typography.titleMedium)
-                            }
-                            OctoConnectedButtonGroup(
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Lucide.Activity, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = "Activity Feed",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OctoDropdownSelector(
                                 options = FeedTab.entries,
                                 selected = feedTab,
                                 onSelect = { feedTab = it },
                                 labelProvider = { it.label },
                                 iconProvider = { tab ->
                                     if (tab == FeedTab.FOLLOWING) Lucide.Users else Lucide.User
-                                },
-                                modifier = Modifier.fillMaxWidth()
+                                }
                             )
                         }
                     }
