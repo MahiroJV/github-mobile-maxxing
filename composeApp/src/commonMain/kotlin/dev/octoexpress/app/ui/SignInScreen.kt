@@ -1,6 +1,7 @@
 package dev.octoexpress.app.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -56,10 +58,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Copy
 import com.composables.icons.lucide.ExternalLink
-import com.composables.icons.lucide.GitBranch
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ShieldCheck
+import dev.octoexpress.app.resources.Res
+import dev.octoexpress.app.resources.app_icon
 import dev.octoexpress.auth.SessionManager
 import dev.octoexpress.auth.openUrlInBrowser
 import dev.octoexpress.model.AppBranding
@@ -71,6 +74,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jetbrains.compose.resources.painterResource
 
 private enum class SignInTab(val label: String) {
     OAUTH_DEVICE("OAuth Device Flow"),
@@ -123,17 +127,13 @@ fun SignInScreen(
                     modifier = Modifier.padding(28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = MaterialTheme.shapes.large
-                    ) {
-                        Icon(
-                            imageVector = Lucide.GitBranch,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(16.dp).size(32.dp)
-                        )
-                    }
+                    Image(
+                        painter = painterResource(Res.drawable.app_icon),
+                        contentDescription = AppBranding.APP_NAME,
+                        modifier = Modifier
+                            .size(68.dp)
+                            .clip(MaterialTheme.shapes.large)
+                    )
 
                     Spacer(Modifier.height(16.dp))
 

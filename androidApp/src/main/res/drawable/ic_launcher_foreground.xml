@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- M-shaped Git commit graph -->
+    <path
+        android:pathData="M32.5,72.5 L32.5,35.5 L54,59 L75.5,35.5 L75.5,72.5"
+        android:strokeWidth="6.2"
+        android:strokeColor="#FFF0F6FC"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- Outer Git nodes -->
+    <path
+        android:fillColor="#FFF0F6FC"
+        android:pathData="M32.5,29.7 A5.8,5.8 0 1,0 32.5,41.3 A5.8,5.8 0 1,0 32.5,29.7 Z
+                          M32.5,66.9 A5.6,5.6 0 1,0 32.5,78.1 A5.6,5.6 0 1,0 32.5,66.9 Z
+                          M75.5,29.7 A5.8,5.8 0 1,0 75.5,41.3 A5.8,5.8 0 1,0 75.5,29.7 Z
+                          M75.5,66.9 A5.6,5.6 0 1,0 75.5,78.1 A5.6,5.6 0 1,0 75.5,66.9 Z" />
+    <!-- Center blue accent node with ring cutout -->
+    <path
+        android:fillColor="#FF58A6FF"
+        android:pathData="M54,52.8 A6.2,6.2 0 1,0 54,65.2 A6.2,6.2 0 1,0 54,52.8 Z" />
+    <path
+        android:fillColor="#FF161B22"
+        android:pathData="M54,56.8 A2.2,2.2 0 1,0 54,61.2 A2.2,2.2 0 1,0 54,56.8 Z" />
+</vector>

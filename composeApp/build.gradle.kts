@@ -83,6 +83,10 @@ kotlin {
     }
 }
 
+compose.resources {
+    packageOfResClass = "dev.octoexpress.app.resources"
+}
+
 compose.desktop {
     application {
         mainClass = "dev.octoexpress.app.MainKt"
@@ -93,6 +97,7 @@ compose.desktop {
             description = "Fast Material 3 Expressive GitHub Client"
             linux {
                 packageName = "github-mobile-maxxing"
+                iconFile.set(project.file("src/desktopMain/resources/app-icon.png"))
                 shortcut = true
             }
         }
