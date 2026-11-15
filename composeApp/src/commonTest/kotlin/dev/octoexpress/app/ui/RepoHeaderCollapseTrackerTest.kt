@@ -38,4 +38,21 @@ class RepoHeaderCollapseTrackerTest {
         tracker.expand()
         assertFalse(tracker.isCollapsed)
     }
+
+    @Test
+    fun `canCollapse false prevents collapse and re-expands active search header`() {
+        val tracker = RepoHeaderCollapseTracker(collapseThresholdPx = 36f, expandThresholdPx = 28f)
+
+        // Scrolling down while search input is active must keep header visible
+        tracker.onVerticalScrollDelta(dy = -80f, canCollapse = false)
+        assertFalse(tracker.isCollapsed)
+
+        // Collapse normally when idle
+        tracker.onVerticalScrollDelta(dy = -60f, canCollapse = true)
+        assertTrue(tracker.isCollapsed)
+
+        // Becoming uncollapsible (e.g., activating search) immediately expands
+        tracker.onVerticalScrollDelta(dy = -10f, canCollapse = false)
+        assertFalse(tracker.isCollapsed)
+    }
 }

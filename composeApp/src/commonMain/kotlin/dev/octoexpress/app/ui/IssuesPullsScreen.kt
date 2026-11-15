@@ -1,5 +1,6 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +48,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.CircleCheck
@@ -161,7 +163,12 @@ fun IssuesPullsScreen(
         }
     }
 
+    val headerTracker = remember { RepoHeaderCollapseTracker() }
+    val headerNestedScroll = remember(headerTracker) { headerTracker.toNestedScrollConnection() }
+    val headerVerticalPadding by animateDpAsState(if (headerTracker.isCollapsed) 6.dp else 14.dp)
+
     LaunchedEffect(preset, stateFilter, login) {
+        headerTracker.expand()
         loadItems(forceRefresh = false)
     }
 
@@ -179,7 +186,7 @@ fun IssuesPullsScreen(
         listPane = {
             AnimatedPane {
                 Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -187,7 +194,7 @@ fun IssuesPullsScreen(
                         ) {
                             Text(
                                 text = "Issues & PRs",
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = if (headerTracker.isCollapsed) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
                                 maxLines = 1,
                                 modifier = Modifier.weight(1f)
                             )
@@ -209,29 +216,33 @@ fun IssuesPullsScreen(
                             }
                         }
 
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IssueStateFilter.entries.forEach { sf ->
-                                FilterChip(
-                                    selected = stateFilter == sf,
-                                    onClick = { stateFilter = sf },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = when (sf) {
-                                                IssueStateFilter.OPEN -> Lucide.CircleDot
-                                                IssueStateFilter.CLOSED -> Lucide.CircleCheck
-                                                IssueStateFilter.ALL -> Lucide.Layers
+                        OctoCollapsibleSection(visible = !headerTracker.isCollapsed) {
+                            Column {
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    IssueStateFilter.entries.forEach { sf ->
+                                        FilterChip(
+                                            selected = stateFilter == sf,
+                                            onClick = { stateFilter = sf },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = when (sf) {
+                                                        IssueStateFilter.OPEN -> Lucide.CircleDot
+                                                        IssueStateFilter.CLOSED -> Lucide.CircleCheck
+                                                        IssueStateFilter.ALL -> Lucide.Layers
+                                                    },
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
                                             },
-                                            contentDescription = null,
-                                            modifier = Modifier.size(15.dp)
+                                            label = { Text(sf.label) }
                                         )
-                                    },
-                                    label = { Text(sf.label) }
-                                )
+                                    }
+                                }
                             }
                         }
 
@@ -244,7 +255,7 @@ fun IssuesPullsScreen(
                     PullToRefreshBox(
                         isRefreshing = isRefreshing && items.isNotEmpty(),
                         onRefresh = { loadItems(forceRefresh = true) },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize().nestedScroll(headerNestedScroll)
                     ) {
                         when {
                             isLoading && items.isEmpty() -> {

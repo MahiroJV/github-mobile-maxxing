@@ -1,5 +1,6 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -56,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -281,6 +283,17 @@ fun NotificationsScreen(
         }
     }
 
+    val headerTracker = remember { RepoHeaderCollapseTracker() }
+    val headerNestedScroll = remember(headerTracker) {
+        headerTracker.toNestedScrollConnection { !isFilterInputActive && searchQuery.isEmpty() }
+    }
+    val showExpandedHeader = !headerTracker.isCollapsed || isFilterInputActive || searchQuery.isNotEmpty()
+    val headerVerticalPadding by animateDpAsState(if (showExpandedHeader) 14.dp else 6.dp)
+
+    LaunchedEffect(filter, reasonFilter) {
+        headerTracker.expand()
+    }
+
     ListDetailPaneScaffold(
         directive = navigator.scaffoldDirective,
         value = navigator.scaffoldValue,
@@ -288,7 +301,7 @@ fun NotificationsScreen(
             AnimatedPane {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -297,13 +310,15 @@ fun NotificationsScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = "Inbox",
-                                        style = MaterialTheme.typography.headlineMedium
+                                        style = if (showExpandedHeader) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge
                                     )
-                                    Text(
-                                        text = "${visibleThreads.size} / ${threads.size} threads",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
+                                    OctoCollapsibleSection(visible = showExpandedHeader) {
+                                        Text(
+                                            text = "${visibleThreads.size} / ${threads.size} threads",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                 }
                                 OctoDropdownSelector(
                                     options = InboxFilter.entries,
@@ -313,80 +328,84 @@ fun NotificationsScreen(
                                 )
                             }
 
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                ReasonFilter.entries.forEach { rf ->
-                                    FilterChip(
-                                        selected = reasonFilter == rf,
-                                        onClick = { reasonFilter = rf },
-                                        label = { Text(rf.label) }
-                                    )
-                                }
-                            }
-
-                            Spacer(Modifier.height(6.dp))
-                            if (!isFilterInputActive && searchQuery.isEmpty()) {
-                                Surface(
-                                    shape = MaterialTheme.shapes.small,
-                                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(52.dp)
-                                        .clickable { isFilterInputActive = true }
-                                ) {
+                            OctoCollapsibleSection(visible = showExpandedHeader) {
+                                Column {
+                                    Spacer(Modifier.height(8.dp))
                                     Row(
-                                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(
-                                            Lucide.Search,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = "Filter by repo or title...",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        ReasonFilter.entries.forEach { rf ->
+                                            FilterChip(
+                                                selected = reasonFilter == rf,
+                                                onClick = { reasonFilter = rf },
+                                                label = { Text(rf.label) }
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(6.dp))
+                                    if (!isFilterInputActive && searchQuery.isEmpty()) {
+                                        Surface(
+                                            shape = MaterialTheme.shapes.small,
+                                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(52.dp)
+                                                .clickable { isFilterInputActive = true }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                Icon(
+                                                    Lucide.Search,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(18.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Text(
+                                                    text = "Filter by repo or title...",
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        OutlinedTextField(
+                                            value = searchQuery,
+                                            onValueChange = { searchQuery = it },
+                                            placeholder = { Text("Filter by repo or title...") },
+                                            leadingIcon = { Icon(Lucide.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                            trailingIcon = {
+                                                IconButton(
+                                                    onClick = {
+                                                        searchQuery = ""
+                                                        focusManager.clearFocus()
+                                                        isFilterInputActive = false
+                                                    }
+                                                ) {
+                                                    Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                                }
+                                            },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                            keyboardActions = KeyboardActions(
+                                                onSearch = {
+                                                    focusManager.clearFocus()
+                                                    if (searchQuery.isEmpty()) isFilterInputActive = false
+                                                }
+                                            ),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .focusRequester(filterFocusRequester)
                                         )
                                     }
                                 }
-                            } else {
-                                OutlinedTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    placeholder = { Text("Filter by repo or title...") },
-                                    leadingIcon = { Icon(Lucide.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                    trailingIcon = {
-                                        IconButton(
-                                            onClick = {
-                                                searchQuery = ""
-                                                focusManager.clearFocus()
-                                                isFilterInputActive = false
-                                            }
-                                        ) {
-                                            Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
-                                        }
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                    keyboardActions = KeyboardActions(
-                                        onSearch = {
-                                            focusManager.clearFocus()
-                                            if (searchQuery.isEmpty()) isFilterInputActive = false
-                                        }
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .focusRequester(filterFocusRequester)
-                                )
                             }
 
                             if ((isLoading || isRefreshing) && threads.isNotEmpty()) {
@@ -398,7 +417,7 @@ fun NotificationsScreen(
                         PullToRefreshBox(
                             isRefreshing = isRefreshing && threads.isNotEmpty(),
                             onRefresh = { loadNotifications(forceRefresh = true, showRefreshFeedback = true) },
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize().nestedScroll(headerNestedScroll)
                         ) {
                             when {
                                 isLoading && threads.isEmpty() -> {

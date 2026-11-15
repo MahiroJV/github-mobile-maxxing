@@ -1,5 +1,6 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -202,13 +204,21 @@ fun GistsScreen(
             }
         )
     } else {
+        val headerTracker = remember { RepoHeaderCollapseTracker() }
+        val headerNestedScroll = remember(headerTracker) { headerTracker.toNestedScrollConnection() }
+        val headerVerticalPadding by animateDpAsState(if (headerTracker.isCollapsed) 4.dp else 10.dp)
+
+        LaunchedEffect(targetUser, activeTab) {
+            headerTracker.expand()
+        }
+
         Column(modifier = Modifier.fillMaxSize()) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .padding(horizontal = 12.dp, vertical = headerVerticalPadding)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onBack) {
@@ -241,14 +251,18 @@ fun GistsScreen(
                     }
 
                     if (targetUser == null) {
-                        Spacer(Modifier.height(6.dp))
-                        PrimaryTabRow(selectedTabIndex = activeTab.ordinal) {
-                            GistsTab.entries.forEach { tab ->
-                                Tab(
-                                    selected = activeTab == tab,
-                                    onClick = { activeTab = tab },
-                                    text = { Text(tab.label, maxLines = 1) }
-                                )
+                        OctoCollapsibleSection(visible = !headerTracker.isCollapsed) {
+                            Column {
+                                Spacer(Modifier.height(6.dp))
+                                PrimaryTabRow(selectedTabIndex = activeTab.ordinal) {
+                                    GistsTab.entries.forEach { tab ->
+                                        Tab(
+                                            selected = activeTab == tab,
+                                            onClick = { activeTab = tab },
+                                            text = { Text(tab.label, maxLines = 1) }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -263,7 +277,7 @@ fun GistsScreen(
             PullToRefreshBox(
                 isRefreshing = isRefreshing,
                 onRefresh = { loadGists(forceRefresh = true) },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().nestedScroll(headerNestedScroll)
             ) {
                 val list = gists
                 when {

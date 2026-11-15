@@ -1,6 +1,7 @@
 package dev.octoexpress.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -82,6 +83,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -299,8 +301,19 @@ private fun RepoListPane(
     var newRepoPrivate by remember { mutableStateOf(false) }
     var newRepoAutoInit by remember { mutableStateOf(true) }
     var createRepoBusy by remember { mutableStateOf(false) }
+    var isSearchFocused by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val headerTracker = remember { RepoHeaderCollapseTracker() }
+    val headerNestedScroll = remember(headerTracker) {
+        headerTracker.toNestedScrollConnection { !(activeTab == RepoListTab.SEARCH && isSearchFocused) }
+    }
+    val showExpandedHeader = !headerTracker.isCollapsed || (activeTab == RepoListTab.SEARCH && isSearchFocused)
+    val headerVerticalPadding by animateDpAsState(if (showExpandedHeader) 14.dp else 6.dp)
+
+    LaunchedEffect(activeTab, searchKind) {
+        headerTracker.expand()
+    }
 
     fun loadTrending(langLabel: String = trendingLang, forceRefresh: Boolean = false) {
         val currentSeq = ++requestSeq
@@ -432,14 +445,14 @@ private fun RepoListPane(
     }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = if (activeTab == RepoListTab.SEARCH && submittedSearchQuery.isBlank()) "Explore" else "Repositories",
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = if (showExpandedHeader) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f)
                 )
                 FilledTonalButton(
@@ -454,139 +467,144 @@ private fun RepoListPane(
                     Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            PrimaryTabRow(
-                selectedTabIndex = RepoListTab.entries.indexOf(activeTab).coerceAtLeast(0),
-                containerColor = androidx.compose.ui.graphics.Color.Transparent
-            ) {
-                RepoListTab.entries.forEach { tab ->
-                    val label = if (tab == RepoListTab.SEARCH) "Explore" else tab.label
-                    val icon = when (tab) {
-                        RepoListTab.MINE -> Lucide.FolderGit2
-                        RepoListTab.STARRED -> OctoFilledIcons.Star
-                        RepoListTab.SEARCH -> Lucide.Compass
-                    }
-                    Tab(
-                        selected = activeTab == tab,
-                        onClick = { activeTab = tab },
-                        text = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Text(label, maxLines = 1, softWrap = false)
-                            }
-                        }
-                    )
-                }
-            }
-            if (activeTab == RepoListTab.SEARCH) {
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Search in",
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OctoDropdownSelector(
-                        options = GlobalSearchKind.entries,
-                        selected = searchKind,
-                        onSelect = { searchKind = it },
-                        labelProvider = { it.label },
-                        iconProvider = {
-                            when (it) {
-                                GlobalSearchKind.REPOSITORIES -> Lucide.Folder
-                                GlobalSearchKind.ISSUES_PRS -> Lucide.CircleDot
-                                GlobalSearchKind.CODE -> Lucide.FileCode
-                                GlobalSearchKind.USERS -> Lucide.Users
-                            }
-                        }
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = {
-                            Text(
-                                when (searchKind) {
-                                    GlobalSearchKind.REPOSITORIES -> "Search repositories..."
-                                    GlobalSearchKind.ISSUES_PRS -> "Search issues & PRs..."
-                                    GlobalSearchKind.CODE -> "Search code (e.g. remember repo:foo/bar)..."
-                                    GlobalSearchKind.USERS -> "Search GitHub users & orgs..."
-                                }
-                            )
-                        },
-                        leadingIcon = { Icon(Lucide.Search, contentDescription = null) },
-                        trailingIcon = if (searchQuery.isNotEmpty()) {
-                            {
-                                IconButton(
-                                    onClick = {
-                                        searchQuery = ""
-                                        submittedSearchQuery = ""
-                                        errorMsg = null
-                                        loadTrending(trendingLang, forceRefresh = false)
-                                    }
-                                ) {
-                                    Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        } else null,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(
-                            onSearch = {
-                                focusManager.clearFocus()
-                                if (searchQuery.isNotBlank()) {
-                                    loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
-                                }
-                            }
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .onPreviewKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
-                                    focusManager.clearFocus()
-                                    if (searchQuery.isNotBlank()) {
-                                        loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
-                                    }
-                                    true
-                                } else {
-                                    false
-                                }
-                            }
-                    )
-                    Button(
-                        onClick = {
-                            focusManager.clearFocus()
-                            loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
-                        },
-                        enabled = searchQuery.isNotBlank()
+            OctoCollapsibleSection(visible = showExpandedHeader) {
+                Column {
+                    Spacer(Modifier.height(10.dp))
+                    PrimaryTabRow(
+                        selectedTabIndex = RepoListTab.entries.indexOf(activeTab).coerceAtLeast(0),
+                        containerColor = androidx.compose.ui.graphics.Color.Transparent
                     ) {
-                        Text("Search")
-                    }
-                }
-                if (submittedSearchQuery.isBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(TRENDING_LANGUAGES, key = { it }) { lang ->
-                            FilterChip(
-                                selected = trendingLang == lang,
-                                onClick = { trendingLang = lang },
-                                leadingIcon = if (lang == "All") {
-                                    { Icon(Lucide.Flame, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null,
-                                label = { Text(if (lang == "All") "Trending All" else lang) }
+                        RepoListTab.entries.forEach { tab ->
+                            val label = if (tab == RepoListTab.SEARCH) "Explore" else tab.label
+                            val icon = when (tab) {
+                                RepoListTab.MINE -> Lucide.FolderGit2
+                                RepoListTab.STARRED -> OctoFilledIcons.Star
+                                RepoListTab.SEARCH -> Lucide.Compass
+                            }
+                            Tab(
+                                selected = activeTab == tab,
+                                onClick = { activeTab = tab },
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Text(label, maxLines = 1, softWrap = false)
+                                    }
+                                }
                             )
+                        }
+                    }
+                    if (activeTab == RepoListTab.SEARCH) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Search in",
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OctoDropdownSelector(
+                                options = GlobalSearchKind.entries,
+                                selected = searchKind,
+                                onSelect = { searchKind = it },
+                                labelProvider = { it.label },
+                                iconProvider = {
+                                    when (it) {
+                                        GlobalSearchKind.REPOSITORIES -> Lucide.Folder
+                                        GlobalSearchKind.ISSUES_PRS -> Lucide.CircleDot
+                                        GlobalSearchKind.CODE -> Lucide.FileCode
+                                        GlobalSearchKind.USERS -> Lucide.Users
+                                    }
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = {
+                                    Text(
+                                        when (searchKind) {
+                                            GlobalSearchKind.REPOSITORIES -> "Search repositories..."
+                                            GlobalSearchKind.ISSUES_PRS -> "Search issues & PRs..."
+                                            GlobalSearchKind.CODE -> "Search code (e.g. remember repo:foo/bar)..."
+                                            GlobalSearchKind.USERS -> "Search GitHub users & orgs..."
+                                        }
+                                    )
+                                },
+                                leadingIcon = { Icon(Lucide.Search, contentDescription = null) },
+                                trailingIcon = if (searchQuery.isNotEmpty()) {
+                                    {
+                                        IconButton(
+                                            onClick = {
+                                                searchQuery = ""
+                                                submittedSearchQuery = ""
+                                                errorMsg = null
+                                                loadTrending(trendingLang, forceRefresh = false)
+                                            }
+                                        ) {
+                                            Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                } else null,
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = {
+                                        focusManager.clearFocus()
+                                        if (searchQuery.isNotBlank()) {
+                                            loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
+                                        }
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .onFocusChanged { isSearchFocused = it.isFocused }
+                                    .onPreviewKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                                            focusManager.clearFocus()
+                                            if (searchQuery.isNotBlank()) {
+                                                loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
+                                            }
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                            )
+                            Button(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
+                                },
+                                enabled = searchQuery.isNotBlank()
+                            ) {
+                                Text("Search")
+                            }
+                        }
+                        if (submittedSearchQuery.isBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(TRENDING_LANGUAGES, key = { it }) { lang ->
+                                    FilterChip(
+                                        selected = trendingLang == lang,
+                                        onClick = { trendingLang = lang },
+                                        leadingIcon = if (lang == "All") {
+                                            { Icon(Lucide.Flame, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                        } else null,
+                                        label = { Text(if (lang == "All") "Trending All" else lang) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -600,7 +618,7 @@ private fun RepoListPane(
         PullToRefreshBox(
             isRefreshing = isRefreshing && hasCurrentItems,
             onRefresh = { loadRepos(forceRefresh = true) },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().nestedScroll(headerNestedScroll)
         ) {
             when {
                 isLoading && !hasCurrentItems -> {
@@ -1658,6 +1676,7 @@ fun RepoDetailScreen(
 
     val headerCollapseTracker = remember(repo.fullName) { RepoHeaderCollapseTracker() }
     val headerNestedScroll = remember(headerCollapseTracker) { headerCollapseTracker.toNestedScrollConnection() }
+    val repoHeaderVerticalPadding by animateDpAsState(if (headerCollapseTracker.isCollapsed) 4.dp else 12.dp)
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Header
@@ -1666,7 +1685,7 @@ fun RepoDetailScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = repoHeaderVerticalPadding)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) {

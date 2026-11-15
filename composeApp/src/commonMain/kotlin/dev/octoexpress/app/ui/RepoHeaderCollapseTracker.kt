@@ -1,8 +1,15 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -21,7 +28,15 @@ class RepoHeaderCollapseTracker(
 
     private var accumulatedDeltaPx: Float = 0f
 
-    fun onVerticalScrollDelta(dy: Float, dx: Float = 0f) {
+    fun onVerticalScrollDelta(dy: Float, dx: Float = 0f, canCollapse: Boolean = true) {
+        if (!canCollapse) {
+            if (isCollapsed) {
+                expand()
+            } else {
+                accumulatedDeltaPx = 0f
+            }
+            return
+        }
         if (abs(dy) <= abs(dx) || dy == 0f) return
         // Reset opposing accumulator immediately when reversing direction for crisp response
         if ((dy < 0f && accumulatedDeltaPx > 0f) || (dy > 0f && accumulatedDeltaPx < 0f)) {
@@ -42,7 +57,7 @@ class RepoHeaderCollapseTracker(
         accumulatedDeltaPx = 0f
     }
 
-    fun toNestedScrollConnection(): NestedScrollConnection = object : NestedScrollConnection {
+    fun toNestedScrollConnection(canCollapse: () -> Boolean = { true }): NestedScrollConnection = object : NestedScrollConnection {
         override fun onPostScroll(
             consumed: Offset,
             available: Offset,
@@ -51,9 +66,28 @@ class RepoHeaderCollapseTracker(
             if (source == NestedScrollSource.UserInput) {
                 val effectiveY = if (consumed.y != 0f) consumed.y else available.y
                 val effectiveX = if (consumed.y != 0f) consumed.x else available.x
-                onVerticalScrollDelta(dy = effectiveY, dx = effectiveX)
+                onVerticalScrollDelta(dy = effectiveY, dx = effectiveX, canCollapse = canCollapse())
             }
             return Offset.Zero
         }
+    }
+}
+
+/**
+ * Shared animated show/hide container for collapsible top header controls.
+ */
+@Composable
+fun OctoCollapsibleSection(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut()
+    ) {
+        content()
     }
 }

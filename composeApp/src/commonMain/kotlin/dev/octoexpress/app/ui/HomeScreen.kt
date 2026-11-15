@@ -1,5 +1,6 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -50,6 +51,7 @@ import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -258,12 +260,17 @@ private fun HomeDashboardPane(
         }
     }
 
+    val headerTracker = remember { RepoHeaderCollapseTracker() }
+    val headerNestedScroll = remember(headerTracker) { headerTracker.toNestedScrollConnection() }
+    val headerVerticalPadding by animateDpAsState(if (headerTracker.isCollapsed) 6.dp else 14.dp)
+
     LaunchedEffect(login, feedTab) {
+        headerTracker.expand()
         loadHome(forceRefresh = false)
     }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -271,7 +278,7 @@ private fun HomeDashboardPane(
                 UserAvatar(
                     avatarUrl = profile?.avatarUrl.orEmpty(),
                     login = login.ifBlank { "?" },
-                    sizeDp = 36,
+                    sizeDp = if (headerTracker.isCollapsed) 28 else 36,
                     modifier = Modifier.clickable(enabled = login.isNotBlank()) { onOpenUser(login) }
                 )
                 Spacer(Modifier.width(12.dp))
@@ -282,16 +289,18 @@ private fun HomeDashboardPane(
                 ) {
                     Text(
                         text = profile?.name ?: "@${login.ifBlank { "GitHub" }}",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = if (headerTracker.isCollapsed) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (login.isNotBlank()) {
-                        Text(
-                            text = "@$login",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        OctoCollapsibleSection(visible = !headerTracker.isCollapsed) {
+                            Text(
+                                text = "@$login",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 IconButton(onClick = onOpenGists) {
@@ -311,7 +320,7 @@ private fun HomeDashboardPane(
         PullToRefreshBox(
             isRefreshing = isRefreshing && (feedEvents.isNotEmpty() || calendar != null),
             onRefresh = { loadHome(forceRefresh = true) },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().nestedScroll(headerNestedScroll)
         ) {
             if (isLoading && feedEvents.isEmpty() && calendar == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
