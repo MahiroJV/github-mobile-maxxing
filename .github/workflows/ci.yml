@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Desktop Tests & Android Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Android SDK licenses accepted
+        run: |
+          if [ -d "${ANDROID_HOME:-}/cmdline-tools" ]; then
+            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+
+      - name: Run KMP Desktop tests & build Desktop target
+        run: |
+          ./gradlew \
+            :core:model:desktopTest \
+            :core:auth:desktopTest \
+            :core:ui:desktopTest \
+            :core:network:desktopTest \
+            :composeApp:desktopTest \
+            :composeApp:desktopMainClasses \
+            --no-daemon
+
+      - name: Build Android Release APK
+        run: ./gradlew :androidApp:assembleRelease --no-daemon
+
+      - name: Upload Desktop test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-test-results
+          path: '**/build/test-results/desktopTest/TEST-*.xml'
+          if-no-files-found: ignore
+
+      - name: Stage named Release APK artifact
+        run: cp androidApp/build/outputs/apk/release/androidApp-release.apk github-mobile-maxxing-release.apk
+
+      - name: Upload Release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-mobile-maxxing-release-apk
+          path: github-mobile-maxxing-release.apk
