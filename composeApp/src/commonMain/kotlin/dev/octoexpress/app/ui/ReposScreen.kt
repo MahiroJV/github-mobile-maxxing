@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -1044,6 +1045,7 @@ fun RepoDetailScreen(
     onMessage: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val viewerProfile by container.viewerProfile.collectAsState()
     var detail by remember(repo.fullName) {
         mutableStateOf(container.repository.peekRepoDetail(repo.owner, repo.name))
     }
@@ -1986,12 +1988,23 @@ fun RepoDetailScreen(
                         add(repo.defaultBranch)
                     }.distinct()
                 }
+                val avatarResolver: (CommitSummary) -> String = { commit ->
+                    resolveCommitAuthorAvatarUrl(
+                        commit = commit,
+                        repoOwner = repo.owner,
+                        repoOwnerAvatarUrl = detail?.summary?.ownerAvatarUrl?.ifBlank { repo.ownerAvatarUrl } ?: repo.ownerAvatarUrl,
+                        viewerLogin = viewerProfile?.login,
+                        viewerName = viewerProfile?.name,
+                        viewerAvatarUrl = viewerProfile?.avatarUrl
+                    )
+                }
                 when {
                     openedCommitSha != null -> {
                         RepoCommitDetailView(
                             sha = openedCommitSha!!,
                             detail = openedCommitDetail,
                             isLoading = commitDetailLoading,
+                            commitAvatarResolver = avatarResolver,
                             onBack = {
                                 openedCommitSha = null
                                 openedCommitDetail = null
@@ -2008,6 +2021,7 @@ fun RepoDetailScreen(
                             result = compareResult,
                             isLoading = compareLoading,
                             errorMsg = compareError,
+                            commitAvatarResolver = avatarResolver,
                             onSelectBase = { base -> compareBase = base; runCompare(base, compareHead) },
                             onSelectHead = { head -> compareHead = head; runCompare(compareBase, head) },
                             onSwapRefs = {
@@ -2029,6 +2043,7 @@ fun RepoDetailScreen(
                             commits = repoCommits,
                             isLoading = commitsLoading,
                             errorMsg = commitsError,
+                            commitAvatarResolver = avatarResolver,
                             onRefresh = { loadCommits(currentRef, forceRefresh = true) },
                             onOpenCompare = {
                                 showCompareView = true
@@ -2638,6 +2653,7 @@ private fun RepoCommitsTabContent(
     commits: List<CommitSummary>?,
     isLoading: Boolean,
     errorMsg: String?,
+    commitAvatarResolver: (CommitSummary) -> String = { it.authorAvatarUrl },
     onRefresh: () -> Unit,
     onOpenCompare: () -> Unit,
     onOpenCommit: (CommitSummary) -> Unit,
@@ -2711,6 +2727,7 @@ private fun RepoCommitsTabContent(
                         items(items = commits, key = { it.sha }, contentType = { "commit_summary" }) { commit ->
                             CommitSummaryCard(
                                 commit = commit,
+                                resolvedAvatarUrl = commitAvatarResolver(commit),
                                 onClick = { onOpenCommit(commit) },
                                 onOpenUser = onOpenUser
                             )
@@ -2722,9 +2739,40 @@ private fun RepoCommitsTabContent(
     }
 }
 
+private fun resolveCommitAuthorAvatarUrl(
+    commit: CommitSummary,
+    repoOwner: String,
+    repoOwnerAvatarUrl: String,
+    viewerLogin: String?,
+    viewerName: String?,
+    viewerAvatarUrl: String?
+): String {
+    if (commit.authorAvatarUrl.isNotBlank()) return commit.authorAvatarUrl
+    val loginMatchesViewer = !viewerLogin.isNullOrBlank() && (
+        commit.authorLogin.equals(viewerLogin, ignoreCase = true) ||
+            commit.authorName.equals(viewerLogin, ignoreCase = true) ||
+            (!viewerName.isNullOrBlank() && commit.authorName.equals(viewerName, ignoreCase = true)) ||
+            (commit.authorLogin == null && repoOwner.equals(viewerLogin, ignoreCase = true))
+        )
+    if (loginMatchesViewer) {
+        viewerAvatarUrl?.takeIf { it.isNotBlank() }?.let { return it }
+        repoOwnerAvatarUrl.takeIf { it.isNotBlank() }?.let { return it }
+        viewerLogin?.let { return "https://avatars.githubusercontent.com/$it?size=96" }
+    }
+    if (commit.authorLogin == null && commit.authorName.equals(repoOwner, ignoreCase = true)) {
+        if (repoOwnerAvatarUrl.isNotBlank()) return repoOwnerAvatarUrl
+        return "https://avatars.githubusercontent.com/$repoOwner?size=96"
+    }
+    commit.authorLogin?.takeIf { it.isNotBlank() }?.let { login ->
+        return "https://avatars.githubusercontent.com/$login?size=96"
+    }
+    return ""
+}
+
 @Composable
 private fun CommitSummaryCard(
     commit: CommitSummary,
+    resolvedAvatarUrl: String = commit.authorAvatarUrl,
     onClick: () -> Unit,
     onOpenUser: (String) -> Unit
 ) {
@@ -2739,7 +2787,7 @@ private fun CommitSummaryCard(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             UserAvatar(
-                avatarUrl = commit.authorAvatarUrl,
+                avatarUrl = resolvedAvatarUrl.ifBlank { commit.authorAvatarUrl },
                 login = commit.authorLogin ?: commit.authorName,
                 sizeDp = 34,
                 modifier = Modifier.clickable(enabled = !commit.authorLogin.isNullOrBlank()) {
@@ -2802,6 +2850,7 @@ private fun RepoCommitDetailView(
     sha: String,
     detail: CommitDetail?,
     isLoading: Boolean,
+    commitAvatarResolver: (CommitSummary) -> String = { it.authorAvatarUrl },
     onBack: () -> Unit,
     onOpenParent: (String) -> Unit,
     onOpenUser: (String) -> Unit
@@ -2871,7 +2920,7 @@ private fun RepoCommitDetailView(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     UserAvatar(
-                                        detail.summary.authorAvatarUrl,
+                                        commitAvatarResolver(detail.summary).ifBlank { detail.summary.authorAvatarUrl },
                                         detail.summary.authorLogin ?: detail.summary.authorName,
                                         sizeDp = 24,
                                         modifier = Modifier.clickable(enabled = !detail.summary.authorLogin.isNullOrBlank()) {
@@ -2945,7 +2994,8 @@ private fun RepoBranchCompareView(
     onRefresh: () -> Unit,
     onBackToCommits: () -> Unit,
     onOpenCommit: (String) -> Unit,
-    onOpenUser: (String) -> Unit
+    onOpenUser: (String) -> Unit,
+    commitAvatarResolver: (CommitSummary) -> String = { it.authorAvatarUrl }
 ) {
     val expandedFiles = remember(baseRef, headRef) { mutableStateMapOf<String, Boolean>() }
 
@@ -3057,6 +3107,7 @@ private fun RepoBranchCompareView(
                         items(items = result.commits, key = { "cmp_${it.sha}" }, contentType = { "commit_summary" }) { commit ->
                             CommitSummaryCard(
                                 commit = commit,
+                                resolvedAvatarUrl = commitAvatarResolver(commit),
                                 onClick = { onOpenCommit(commit.sha) },
                                 onOpenUser = onOpenUser
                             )

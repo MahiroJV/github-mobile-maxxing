@@ -200,4 +200,69 @@ class CommitsAndCompareTest {
         assertNull(repo.peekRepoCommits("octocat", "hello", ref = "main"))
         assertNull(repo.peekCommitDetail("octocat", "hello", "abc1234567890"))
     }
+
+    @Test
+    fun commitsInferAvatarFromNoreplyEmailOrNonBotCommitterWhenAuthorIsNull() = runTest {
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            when (path) {
+                "/repos/octocat/personal/commits" -> respond(
+                    content = """
+                        [
+                          {
+                            "sha": "111aaaa",
+                            "commit": {
+                              "message": "local noreply commit",
+                              "author": { "name": "Local User", "email": "12345+neutron42@users.noreply.github.com", "date": "2026-11-15T10:00:00Z" }
+                            },
+                            "author": null,
+                            "committer": { "login": "web-flow", "avatar_url": "https://avatars.example/webflow.png" }
+                          },
+                          {
+                            "sha": "222bbbb",
+                            "commit": {
+                              "message": "committer fallback commit",
+                              "author": { "name": "Dev", "email": "dev@example.com", "date": "2026-11-15T09:00:00Z" }
+                            },
+                            "author": null,
+                            "committer": { "login": "realuser", "avatar_url": "https://avatars.example/realuser.png" }
+                          },
+                          {
+                            "sha": "333cccc",
+                            "commit": {
+                              "message": "author login without avatar url",
+                              "author": { "name": "Octo", "date": "2026-11-15T08:00:00Z" }
+                            },
+                            "author": { "login": "octocat", "avatar_url": "" }
+                          }
+                        ]
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                else -> respond("[]", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        }
+        val sessionManager = SessionManager(
+            tokenStore = CommitsTestTokenStore(),
+            deviceFlowClient = DeviceFlowClient(HttpClient(engine))
+        )
+        sessionManager.initialize()
+        val repo = GitHubRepository(sessionManager, httpClient = createClient(engine))
+
+        val commits = repo.getRepoCommits("octocat", "personal").getOrThrow()
+        assertEquals(3, commits.size)
+
+        // Commit 1: noreply email extracted, web-flow ignored
+        assertEquals("neutron42", commits[0].authorLogin)
+        assertEquals("https://avatars.githubusercontent.com/neutron42?size=96", commits[0].authorAvatarUrl)
+
+        // Commit 2: real committer used when author is null
+        assertEquals("realuser", commits[1].authorLogin)
+        assertEquals("https://avatars.example/realuser.png", commits[1].authorAvatarUrl)
+
+        // Commit 3: author login without avatar_url gets github avatar url
+        assertEquals("octocat", commits[2].authorLogin)
+        assertEquals("https://avatars.githubusercontent.com/octocat?size=96", commits[2].authorAvatarUrl)
+    }
 }

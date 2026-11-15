@@ -224,6 +224,7 @@ private data class RestEventDto(
 @Serializable
 private data class RestCommitAuthorMetaDto(
     val name: String = "",
+    val email: String = "",
     val date: String = ""
 )
 
@@ -264,6 +265,7 @@ private data class RestCommitDto(
     val sha: String = "",
     val commit: RestCommitMetaDto = RestCommitMetaDto(),
     val author: RestCommitUserDto? = null,
+    val committer: RestCommitUserDto? = null,
     val parents: List<RestCommitParentDto> = emptyList(),
     val stats: RestCommitStatsDto? = null,
     val files: List<PullFileDto> = emptyList(),
@@ -274,15 +276,23 @@ private data class RestCommitDto(
         val splitIdx = normalized.indexOf('\n')
         val headline = if (splitIdx >= 0) normalized.substring(0, splitIdx).trim() else normalized
         val body = if (splitIdx >= 0) normalized.substring(splitIdx + 1).trim() else ""
+        val nonBotCommitter = committer?.takeIf { !it.login.equals("web-flow", ignoreCase = true) }
+        val noreplyLogin = commit.author?.email?.let(::extractGitHubLoginFromNoreplyEmail)
+            ?: commit.committer?.email?.let(::extractGitHubLoginFromNoreplyEmail)
+        val resolvedLogin = author?.login ?: noreplyLogin ?: nonBotCommitter?.login
+        val resolvedAvatarUrl = author?.avatarUrl?.takeIf { it.isNotBlank() }
+            ?: nonBotCommitter?.avatarUrl?.takeIf { it.isNotBlank() }
+            ?: resolvedLogin?.let { "https://avatars.githubusercontent.com/$it?size=96" }
+            ?: ""
         return CommitSummary(
             sha = sha,
             shortSha = sha.take(7),
             headline = headline.ifBlank { "(no commit message)" },
             body = body,
-            authorName = commit.author?.name?.ifBlank { author?.login ?: "unknown" }
-                ?: author?.login ?: "unknown",
-            authorLogin = author?.login,
-            authorAvatarUrl = author?.avatarUrl.orEmpty(),
+            authorName = commit.author?.name?.ifBlank { resolvedLogin ?: "unknown" }
+                ?: resolvedLogin ?: "unknown",
+            authorLogin = resolvedLogin,
+            authorAvatarUrl = resolvedAvatarUrl,
             committedAt = commit.committer?.date?.ifBlank { commit.author?.date.orEmpty() }
                 ?: commit.author?.date.orEmpty(),
             parentShas = parents.mapNotNull { it.sha.takeIf(String::isNotBlank) },
@@ -290,6 +300,15 @@ private data class RestCommitDto(
             isVerified = commit.verification?.verified == true
         )
     }
+}
+
+private fun extractGitHubLoginFromNoreplyEmail(email: String): String? {
+    val trimmed = email.trim()
+    val suffix = "@users.noreply.github.com"
+    if (!trimmed.endsWith(suffix, ignoreCase = true)) return null
+    val localPart = trimmed.substringBefore('@')
+    val login = if ('+' in localPart) localPart.substringAfter('+') else localPart
+    return login.takeIf { it.isNotBlank() }
 }
 
 @Serializable
