@@ -40,11 +40,15 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Settings
 import dev.octoexpress.app.notifications.PlatformNotifier
 import dev.octoexpress.app.ui.HomeScreen
+import dev.octoexpress.app.ui.IssuePullDetailPane
 import dev.octoexpress.app.ui.IssuesPullsScreen
 import dev.octoexpress.app.ui.NotificationsScreen
+import dev.octoexpress.app.ui.RepoDetailScreen
 import dev.octoexpress.app.ui.ReposScreen
 import dev.octoexpress.app.ui.SettingsScreen
 import dev.octoexpress.app.ui.SignInScreen
+import dev.octoexpress.app.ui.UserProfileScreen
+import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.theme.OctoExpressTheme
 import kotlinx.coroutines.delay
@@ -170,19 +174,40 @@ private fun MainAuthenticatedShell(
     onConsumeDeepLink: () -> Unit
 ) {
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
+    var profileBackStack by remember { mutableStateOf<List<String>>(emptyList()) }
+    var overlayRepo by remember { mutableStateOf<RepoSummary?>(null) }
+    var overlayIssue by remember { mutableStateOf<IssuePullTarget?>(null) }
     val unreadCount by container.unreadNotificationCount.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    val openUserProfile: (String) -> Unit = { targetLogin ->
+        if (targetLogin.isNotBlank()) {
+            overlayRepo = null
+            overlayIssue = null
+            profileBackStack = profileBackStack + targetLogin
+        }
+    }
+
     LaunchedEffect(deepLinkTarget) {
         if (deepLinkTarget != null) {
+            profileBackStack = emptyList()
+            overlayRepo = null
+            overlayIssue = null
             currentDestination = AppDestination.INBOX
         }
     }
 
-    // Android System Back returns to Home tab before exiting app
-    BackHandler(enabled = currentDestination != AppDestination.HOME) {
-        currentDestination = AppDestination.HOME
+    // Android System Back pops profile/overlay stack or returns to Home tab before exiting app
+    BackHandler(
+        enabled = overlayIssue != null || overlayRepo != null || profileBackStack.isNotEmpty() || currentDestination != AppDestination.HOME
+    ) {
+        when {
+            overlayIssue != null -> overlayIssue = null
+            overlayRepo != null -> overlayRepo = null
+            profileBackStack.isNotEmpty() -> profileBackStack = profileBackStack.dropLast(1)
+            else -> currentDestination = AppDestination.HOME
+        }
     }
 
     val showMessage: (String) -> Unit = { msg ->
@@ -221,34 +246,63 @@ private fun MainAuthenticatedShell(
             snackbarHost = { SnackbarHost(snackbarHostState) }
         ) { innerPadding ->
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                when (currentDestination) {
-                    AppDestination.HOME -> HomeScreen(
+                when {
+                    overlayIssue != null -> IssuePullDetailPane(
+                        target = overlayIssue!!,
                         container = container,
-                        unreadCount = unreadCount,
-                        onNavigateInbox = { currentDestination = AppDestination.INBOX },
-                        onNavigateIssuesPrs = { currentDestination = AppDestination.ISSUES_PRS },
-                        onNavigateRepos = { currentDestination = AppDestination.REPOS },
+                        showBackButton = true,
+                        onBack = { overlayIssue = null },
                         onMessage = showMessage
                     )
-                    AppDestination.INBOX -> NotificationsScreen(
+                    overlayRepo != null -> RepoDetailScreen(
+                        repo = overlayRepo!!,
                         container = container,
-                        deepLinkTarget = deepLinkTarget,
-                        onConsumeDeepLink = onConsumeDeepLink,
+                        onBack = { overlayRepo = null },
+                        onOpenIssueOrPull = { overlayIssue = it },
+                        onOpenUser = openUserProfile,
                         onMessage = showMessage
                     )
-                    AppDestination.ISSUES_PRS -> IssuesPullsScreen(
+                    profileBackStack.isNotEmpty() -> UserProfileScreen(
+                        login = profileBackStack.last(),
                         container = container,
+                        onBack = { profileBackStack = profileBackStack.dropLast(1) },
+                        onOpenRepo = { overlayRepo = it },
+                        onOpenIssueOrPull = { overlayIssue = it },
+                        onOpenUser = { nextLogin -> profileBackStack = profileBackStack + nextLogin },
                         onMessage = showMessage
                     )
-                    AppDestination.REPOS -> ReposScreen(
-                        container = container,
-                        onMessage = showMessage
-                    )
-                    AppDestination.SETTINGS -> SettingsScreen(
-                        container = container,
-                        onSignedOut = { currentDestination = AppDestination.HOME },
-                        onMessage = showMessage
-                    )
+                    else -> when (currentDestination) {
+                        AppDestination.HOME -> HomeScreen(
+                            container = container,
+                            unreadCount = unreadCount,
+                            onNavigateInbox = { currentDestination = AppDestination.INBOX },
+                            onNavigateIssuesPrs = { currentDestination = AppDestination.ISSUES_PRS },
+                            onNavigateRepos = { currentDestination = AppDestination.REPOS },
+                            onOpenUser = openUserProfile,
+                            onMessage = showMessage
+                        )
+                        AppDestination.INBOX -> NotificationsScreen(
+                            container = container,
+                            deepLinkTarget = deepLinkTarget,
+                            onConsumeDeepLink = onConsumeDeepLink,
+                            onMessage = showMessage
+                        )
+                        AppDestination.ISSUES_PRS -> IssuesPullsScreen(
+                            container = container,
+                            onMessage = showMessage
+                        )
+                        AppDestination.REPOS -> ReposScreen(
+                            container = container,
+                            onOpenUser = openUserProfile,
+                            onMessage = showMessage
+                        )
+                        AppDestination.SETTINGS -> SettingsScreen(
+                            container = container,
+                            onOpenUser = openUserProfile,
+                            onSignedOut = { currentDestination = AppDestination.HOME },
+                            onMessage = showMessage
+                        )
+                    }
                 }
             }
         }

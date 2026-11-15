@@ -117,6 +117,7 @@ private enum class RepoDetailTab(val label: String) {
 @Composable
 fun ReposScreen(
     container: AppContainer,
+    onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
     var selectedRepo by remember { mutableStateOf<RepoSummary?>(null) }
@@ -143,6 +144,7 @@ fun ReposScreen(
                 container = container,
                 onBack = { selectedRepo = null },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
+                onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
         }
@@ -388,7 +390,7 @@ private fun RepoListPane(
 }
 
 @Composable
-private fun RepoSummaryCard(
+fun RepoSummaryCard(
     repo: RepoSummary,
     onClick: () -> Unit
 ) {
@@ -474,6 +476,7 @@ fun RepoDetailScreen(
     container: AppContainer,
     onBack: () -> Unit,
     onOpenIssueOrPull: (IssuePullTarget) -> Unit,
+    onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -665,7 +668,9 @@ fun RepoDetailScreen(
                         style = MaterialTheme.typography.titleLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(enabled = repo.owner.isNotBlank()) { onOpenUser(repo.owner) }
                     )
                     FilledTonalButton(
                         onClick = {

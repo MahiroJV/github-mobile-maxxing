@@ -12,12 +12,15 @@ import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.MergeMethod
 import dev.octoexpress.model.NotificationThread
+import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.RateLimitInfo
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TreeEntry
+import dev.octoexpress.model.UserProfile
+import dev.octoexpress.model.UserSummary
 import dev.octoexpress.model.ViewerProfile
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.async
@@ -127,6 +130,12 @@ class GitHubRepository(
     private val contributionCache = LruMemoryCache<String, ContributionCalendar>(ttl = 300.seconds, maxEntries = 12)
     private val receivedEventsCache = LruMemoryCache<String, List<ActivityEvent>>(ttl = 60.seconds, maxEntries = 8)
     private val userEventsCache = LruMemoryCache<String, List<ActivityEvent>>(ttl = 60.seconds, maxEntries = 12)
+    private val userProfileCache = LruMemoryCache<String, UserProfile>(ttl = 180.seconds, maxEntries = 24)
+    private val userReposCache = LruMemoryCache<String, List<RepoSummary>>(ttl = 120.seconds, maxEntries = 24)
+    private val userStarredCache = LruMemoryCache<String, List<RepoSummary>>(ttl = 120.seconds, maxEntries = 24)
+    private val userOrgsCache = LruMemoryCache<String, List<OrganizationSummary>>(ttl = 180.seconds, maxEntries = 24)
+    private val userFollowersCache = LruMemoryCache<String, List<UserSummary>>(ttl = 120.seconds, maxEntries = 24)
+    private val userFollowingCache = LruMemoryCache<String, List<UserSummary>>(ttl = 120.seconds, maxEntries = 24)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -144,6 +153,12 @@ class GitHubRepository(
         contributionCache.clear()
         receivedEventsCache.clear()
         userEventsCache.clear()
+        userProfileCache.clear()
+        userReposCache.clear()
+        userStarredCache.clear()
+        userOrgsCache.clear()
+        userFollowersCache.clear()
+        userFollowingCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -195,6 +210,12 @@ class GitHubRepository(
 
     fun peekUserEvents(login: String): List<ActivityEvent>? =
         userEventsCache.peek(login)
+
+    fun peekUserProfile(login: String): UserProfile? =
+        userProfileCache.peek(login)
+
+    fun peekUserRepositories(login: String): List<RepoSummary>? =
+        userReposCache.peek(login)
 
     // ---- Cached / Parallel Network Operations ----
 
@@ -550,6 +571,98 @@ class GitHubRepository(
             restService.fetchUserEvents(login)
         }.onSuccess {
             userEventsCache.put(login, it)
+        }
+    }
+
+    suspend fun getUserProfile(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<UserProfile> {
+        if (!forceRefresh) {
+            userProfileCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserProfileRest(login)
+        }.onSuccess {
+            userProfileCache.put(login, it)
+        }
+    }
+
+    suspend fun setFollowingUser(login: String, follow: Boolean): Result<Unit> = runCatching {
+        restService.setFollowingUser(login, follow)
+    }.onSuccess {
+        userProfileCache.invalidate(login)
+        profileCache.clear()
+    }
+
+    suspend fun getUserRepositories(
+        login: String,
+        isOrganization: Boolean = false,
+        forceRefresh: Boolean = false
+    ): Result<List<RepoSummary>> {
+        if (!forceRefresh) {
+            userReposCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserRepositories(login, isOrganization = isOrganization)
+        }.onSuccess {
+            userReposCache.put(login, it)
+        }
+    }
+
+    suspend fun getUserStarredRepositories(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<List<RepoSummary>> {
+        if (!forceRefresh) {
+            userStarredCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserStarredRepositories(login)
+        }.onSuccess {
+            userStarredCache.put(login, it)
+        }
+    }
+
+    suspend fun getUserOrganizations(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<List<OrganizationSummary>> {
+        if (!forceRefresh) {
+            userOrgsCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserOrganizations(login)
+        }.onSuccess {
+            userOrgsCache.put(login, it)
+        }
+    }
+
+    suspend fun getUserFollowers(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<List<UserSummary>> {
+        if (!forceRefresh) {
+            userFollowersCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserFollowers(login)
+        }.onSuccess {
+            userFollowersCache.put(login, it)
+        }
+    }
+
+    suspend fun getUserFollowing(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<List<UserSummary>> {
+        if (!forceRefresh) {
+            userFollowingCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserFollowing(login)
+        }.onSuccess {
+            userFollowingCache.put(login, it)
         }
     }
 }

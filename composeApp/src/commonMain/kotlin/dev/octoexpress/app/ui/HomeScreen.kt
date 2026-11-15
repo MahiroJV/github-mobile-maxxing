@@ -98,6 +98,7 @@ fun HomeScreen(
     onNavigateInbox: () -> Unit,
     onNavigateIssuesPrs: () -> Unit,
     onNavigateRepos: () -> Unit,
+    onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
     var selectedRepo by remember { mutableStateOf<RepoSummary?>(null) }
@@ -147,6 +148,7 @@ fun HomeScreen(
                     )
                 },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
+                onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
         }
@@ -163,6 +165,7 @@ private fun HomeDashboardPane(
     onNavigateRepos: () -> Unit,
     onOpenRepo: (owner: String, name: String) -> Unit,
     onOpenIssueOrPull: (IssuePullTarget) -> Unit,
+    onOpenUser: (String) -> Unit,
     onMessage: (String) -> Unit
 ) {
     val profile by container.viewerProfile.collectAsState()
@@ -246,10 +249,15 @@ private fun HomeDashboardPane(
                 UserAvatar(
                     avatarUrl = profile?.avatarUrl.orEmpty(),
                     login = login.ifBlank { "?" },
-                    sizeDp = 36
+                    sizeDp = 36,
+                    modifier = Modifier.clickable(enabled = login.isNotBlank()) { onOpenUser(login) }
                 )
                 Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(enabled = login.isNotBlank()) { onOpenUser(login) }
+                ) {
                     Text(
                         text = profile?.name ?: "@${login.ifBlank { "GitHub" }}",
                         style = MaterialTheme.typography.titleLarge,
@@ -434,6 +442,7 @@ private fun HomeDashboardPane(
                         ) { event ->
                             ActivityEventCard(
                                 event = event,
+                                onOpenActor = { onOpenUser(event.actor.login) },
                                 onClick = {
                                     val num = event.targetIssueNumber
                                     if (num != null && event.repoOwner.isNotBlank()) {
@@ -454,7 +463,7 @@ private fun HomeDashboardPane(
 }
 
 @Composable
-private fun ContributionHeatmapCard(calendar: ContributionCalendar) {
+fun ContributionHeatmapCard(calendar: ContributionCalendar) {
     val baseGreen = Color(0xFF2EA043)
     val emptyColor = MaterialTheme.colorScheme.surfaceContainerHighest
     ElevatedCard(
@@ -531,8 +540,9 @@ private fun ContributionHeatmapCard(calendar: ContributionCalendar) {
 }
 
 @Composable
-private fun ActivityEventCard(
+fun ActivityEventCard(
     event: ActivityEvent,
+    onOpenActor: () -> Unit = {},
     onClick: () -> Unit
 ) {
     val icon: ImageVector = when (event.kind) {
@@ -560,7 +570,12 @@ private fun ActivityEventCard(
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            UserAvatar(event.actor.avatarUrl, event.actor.login, sizeDp = 32)
+            UserAvatar(
+                event.actor.avatarUrl,
+                event.actor.login,
+                sizeDp = 32,
+                modifier = Modifier.clickable(onClick = onOpenActor)
+            )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)

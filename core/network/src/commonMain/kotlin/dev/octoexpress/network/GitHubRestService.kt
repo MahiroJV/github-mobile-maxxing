@@ -9,11 +9,13 @@ import dev.octoexpress.model.MergeMethod
 import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationSubjectType
 import dev.octoexpress.model.NotificationThread
+import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
+import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -192,6 +194,40 @@ private data class RestEventDto(
     val repo: RestEventRepoDto = RestEventRepoDto(),
     val payload: JsonObject? = null,
     @SerialName("created_at") val createdAt: String = ""
+)
+
+@Serializable
+private data class RestUserProfileDto(
+    val login: String,
+    val name: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String = "",
+    val bio: String? = null,
+    val company: String? = null,
+    val location: String? = null,
+    val blog: String? = null,
+    @SerialName("twitter_username") val twitterUsername: String? = null,
+    val email: String? = null,
+    val followers: Int = 0,
+    val following: Int = 0,
+    @SerialName("public_repos") val publicRepos: Int = 0,
+    @SerialName("public_gists") val publicGists: Int = 0,
+    val type: String = "User",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestOrgDto(
+    val login: String,
+    @SerialName("avatar_url") val avatarUrl: String = "",
+    val description: String? = null
+)
+
+@Serializable
+private data class RestUserFollowItemDto(
+    val login: String,
+    @SerialName("avatar_url") val avatarUrl: String = "",
+    @SerialName("html_url") val htmlUrl: String = ""
 )
 
 class GitHubRestService(
@@ -510,6 +546,117 @@ class GitHubRestService(
             throw GitHubApiException(res.status.value, "Failed to load user events (${res.status.value})")
         }
         return res.body<List<RestEventDto>>().map(::parseActivityEvent)
+    }
+
+    suspend fun fetchUserProfileRest(login: String): UserProfile {
+        val res = httpClient.get("$baseUrl/users/$login")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load user @$login (${res.status.value})")
+        }
+        val dto = res.body<RestUserProfileDto>()
+        val isOrg = dto.type.equals("Organization", ignoreCase = true)
+        val isFollowing = if (!isOrg) checkViewerFollowing(dto.login) else false
+        return UserProfile(
+            login = dto.login,
+            name = dto.name,
+            avatarUrl = dto.avatarUrl,
+            bio = dto.bio,
+            company = dto.company,
+            location = dto.location,
+            blogUrl = dto.blog?.takeIf { it.isNotBlank() },
+            twitterUsername = dto.twitterUsername?.takeIf { it.isNotBlank() },
+            email = dto.email?.takeIf { it.isNotBlank() },
+            followersCount = dto.followers,
+            followingCount = dto.following,
+            publicReposCount = dto.publicRepos,
+            publicGistsCount = dto.publicGists,
+            isOrganization = isOrg,
+            viewerIsFollowing = isFollowing,
+            createdAt = dto.createdAt,
+            htmlUrl = dto.htmlUrl
+        )
+    }
+
+    suspend fun checkViewerFollowing(login: String): Boolean {
+        val res = httpClient.get("$baseUrl/user/following/$login")
+        return res.status.value == 204
+    }
+
+    suspend fun setFollowingUser(login: String, follow: Boolean) {
+        val url = "$baseUrl/user/following/$login"
+        val res = if (follow) {
+            httpClient.put(url) {
+                header(HttpHeaders.ContentLength, "0")
+            }
+        } else {
+            httpClient.delete(url)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to update follow state (${res.status.value})")
+        }
+    }
+
+    suspend fun fetchUserRepositories(login: String, isOrganization: Boolean = false, perPage: Int = 40): List<RepoSummary> {
+        val endpoint = if (isOrganization) {
+            "$baseUrl/orgs/$login/repos"
+        } else {
+            "$baseUrl/users/$login/repos"
+        }
+        val res = httpClient.get(endpoint) {
+            parameter("sort", "updated")
+            parameter("direction", "desc")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load repositories for @$login (${res.status.value})")
+        }
+        return res.body<List<RestRepoDto>>().map { it.toRepoSummary() }
+    }
+
+    suspend fun fetchUserStarredRepositories(login: String, perPage: Int = 30): List<RepoSummary> {
+        val res = httpClient.get("$baseUrl/users/$login/starred") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load starred repos for @$login (${res.status.value})")
+        }
+        return res.body<List<RestRepoDto>>().map { it.toRepoSummary() }
+    }
+
+    suspend fun fetchUserOrganizations(login: String): List<OrganizationSummary> {
+        val res = httpClient.get("$baseUrl/users/$login/orgs") {
+            parameter("per_page", 30)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load organizations (${res.status.value})")
+        }
+        return res.body<List<RestOrgDto>>().map {
+            OrganizationSummary(login = it.login, avatarUrl = it.avatarUrl, description = it.description)
+        }
+    }
+
+    suspend fun fetchUserFollowers(login: String, perPage: Int = 40): List<UserSummary> {
+        val res = httpClient.get("$baseUrl/users/$login/followers") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load followers (${res.status.value})")
+        }
+        return res.body<List<RestUserFollowItemDto>>().map {
+            UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
+        }
+    }
+
+    suspend fun fetchUserFollowing(login: String, perPage: Int = 40): List<UserSummary> {
+        val res = httpClient.get("$baseUrl/users/$login/following") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load following (${res.status.value})")
+        }
+        return res.body<List<RestUserFollowItemDto>>().map {
+            UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
+        }
     }
 
     private fun parseActivityEvent(dto: RestEventDto): ActivityEvent {

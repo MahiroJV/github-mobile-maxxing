@@ -69,6 +69,7 @@ private enum class PollIntervalOption(val label: String, val minutes: Int) {
 @Composable
 fun SettingsScreen(
     container: AppContainer,
+    onOpenUser: (String) -> Unit = {},
     onSignedOut: () -> Unit,
     onMessage: (String) -> Unit
 ) {
@@ -107,7 +108,12 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(20.dp),
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .clickable(enabled = (profile?.login ?: session?.userLogin)?.isNotBlank() == true) {
+                            val loginTarget = profile?.login ?: session?.userLogin
+                            if (!loginTarget.isNullOrBlank()) onOpenUser(loginTarget)
+                        },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     UserAvatar(
