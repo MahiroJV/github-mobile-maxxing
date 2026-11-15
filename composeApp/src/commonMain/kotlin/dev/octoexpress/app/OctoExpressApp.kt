@@ -1,14 +1,21 @@
 package dev.octoexpress.app
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
@@ -69,7 +76,8 @@ private enum class AppDestination(
 @Composable
 fun OctoExpressApp(
     deepLinkTarget: IssuePullTarget? = null,
-    onConsumeDeepLink: () -> Unit = {}
+    onConsumeDeepLink: () -> Unit = {},
+    onDarkThemeChanged: (Boolean) -> Unit = {}
 ) {
     setSingletonImageLoaderFactory { context ->
         ImageLoader.Builder(context)
@@ -136,6 +144,11 @@ fun OctoExpressApp(
         }
     }
 
+    val resolvedDarkTheme = themePrefs.darkModeOverride ?: isSystemInDarkTheme()
+    LaunchedEffect(resolvedDarkTheme) {
+        onDarkThemeChanged(resolvedDarkTheme)
+    }
+
     OctoExpressTheme(
         seedColorHex = themePrefs.seedColorHex,
         useDynamicColor = themePrefs.useDynamicColor,
@@ -143,8 +156,13 @@ fun OctoExpressApp(
     ) {
         when {
             !isInitialized -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    OctoLoadingState(message = "Starting OctoExpress...")
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        OctoLoadingState(message = "Starting OctoExpress...")
+                    }
                 }
             }
 
@@ -217,6 +235,7 @@ private fun MainAuthenticatedShell(
     }
 
     NavigationSuiteScaffold(
+        containerColor = MaterialTheme.colorScheme.surface,
         navigationSuiteItems = {
             AppDestination.entries.forEach { dest ->
                 item(
@@ -243,6 +262,8 @@ private fun MainAuthenticatedShell(
         }
     ) {
         Scaffold(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
             snackbarHost = { SnackbarHost(snackbarHostState) }
         ) { innerPadding ->
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {

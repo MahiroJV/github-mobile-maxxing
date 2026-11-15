@@ -3,14 +3,17 @@ package dev.octoexpress.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Display
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -26,7 +29,10 @@ class MainActivity : ComponentActivity() {
     ) { /* Permission result handled gracefully by PlatformNotifier */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
         enableMaxRefreshRate()
         AndroidAuthContextHolder.init(this)
@@ -35,9 +41,22 @@ class MainActivity : ComponentActivity() {
         deepLinkTarget = parseDeepLink(intent)
 
         setContent {
+            var isDarkTheme by mutableStateOf(false)
+            LaunchedEffect(isDarkTheme) {
+                val barStyle = if (isDarkTheme) {
+                    SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+                }
+                enableEdgeToEdge(
+                    statusBarStyle = barStyle,
+                    navigationBarStyle = barStyle
+                )
+            }
             OctoExpressApp(
                 deepLinkTarget = deepLinkTarget,
-                onConsumeDeepLink = { deepLinkTarget = null }
+                onConsumeDeepLink = { deepLinkTarget = null },
+                onDarkThemeChanged = { isDarkTheme = it }
             )
         }
     }
