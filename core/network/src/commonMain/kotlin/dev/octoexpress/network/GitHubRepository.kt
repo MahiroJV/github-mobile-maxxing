@@ -11,7 +11,9 @@ import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
 import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
+import dev.octoexpress.model.LabelTag
 import dev.octoexpress.model.MergeMethod
+import dev.octoexpress.model.MilestoneSummary
 import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.PullFileChange
@@ -141,6 +143,10 @@ class GitHubRepository(
     private val searchCodeCache = LruMemoryCache<String, List<CodeSearchHit>>(ttl = 90.seconds, maxEntries = 16)
     private val searchUsersCache = LruMemoryCache<String, List<UserSummary>>(ttl = 90.seconds, maxEntries = 16)
     private val trendingReposCache = LruMemoryCache<String, List<RepoSummary>>(ttl = 180.seconds, maxEntries = 12)
+    private val repoSubscriptionCache = LruMemoryCache<RepoKey, Boolean>(ttl = 120.seconds, maxEntries = 32)
+    private val repoLabelsCache = LruMemoryCache<RepoKey, List<LabelTag>>(ttl = 180.seconds, maxEntries = 32)
+    private val repoMilestonesCache = LruMemoryCache<RepoKey, List<MilestoneSummary>>(ttl = 180.seconds, maxEntries = 32)
+    private val repoAssigneesCache = LruMemoryCache<RepoKey, List<UserSummary>>(ttl = 180.seconds, maxEntries = 32)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -168,6 +174,10 @@ class GitHubRepository(
         searchCodeCache.clear()
         searchUsersCache.clear()
         trendingReposCache.clear()
+        repoSubscriptionCache.clear()
+        repoLabelsCache.clear()
+        repoMilestonesCache.clear()
+        repoAssigneesCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -751,5 +761,143 @@ class GitHubRepository(
         }.onSuccess {
             trendingReposCache.put(key, it)
         }
+    }
+
+    suspend fun createRepository(
+        name: String,
+        description: String = "",
+        isPrivate: Boolean = false,
+        autoInit: Boolean = true
+    ): Result<RepoSummary> = runCatching {
+        restService.createRepositoryRest(name, description, isPrivate, autoInit)
+    }.onSuccess {
+        viewerReposCache.invalidate("MY")
+        userReposCache.clear()
+    }
+
+    suspend fun forkRepository(owner: String, repo: String): Result<RepoSummary> = runCatching {
+        restService.forkRepositoryRest(owner, repo)
+    }.onSuccess {
+        viewerReposCache.invalidate("MY")
+        userReposCache.clear()
+        repoDetailCache.invalidate(RepoKey(owner, repo))
+    }
+
+    fun peekRepoSubscription(owner: String, repo: String): Boolean? =
+        repoSubscriptionCache.peek(RepoKey(owner, repo))
+
+    suspend fun getRepoSubscription(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<Boolean> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            repoSubscriptionCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchRepoSubscription(owner, repo)
+        }.onSuccess {
+            repoSubscriptionCache.put(key, it)
+        }
+    }
+
+    suspend fun setRepoSubscription(
+        owner: String,
+        repo: String,
+        subscribed: Boolean
+    ): Result<Unit> = runCatching {
+        restService.setRepoSubscription(owner, repo, subscribed)
+    }.onSuccess {
+        repoSubscriptionCache.put(RepoKey(owner, repo), subscribed)
+        repoDetailCache.invalidate(RepoKey(owner, repo))
+    }
+
+    suspend fun getRepoStargazers(owner: String, repo: String): Result<List<UserSummary>> = runCatching {
+        restService.fetchRepoStargazers(owner, repo)
+    }
+
+    suspend fun getRepoForks(owner: String, repo: String): Result<List<RepoSummary>> = runCatching {
+        restService.fetchRepoForks(owner, repo)
+    }
+
+    suspend fun getRepoContributors(owner: String, repo: String): Result<List<UserSummary>> = runCatching {
+        restService.fetchRepoContributors(owner, repo)
+    }
+
+    suspend fun getRepoLabels(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<List<LabelTag>> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            repoLabelsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchRepoLabels(owner, repo)
+        }.onSuccess {
+            repoLabelsCache.put(key, it)
+        }
+    }
+
+    suspend fun createRepoLabel(
+        owner: String,
+        repo: String,
+        name: String,
+        colorHex: String,
+        description: String = ""
+    ): Result<LabelTag> = runCatching {
+        restService.createRepoLabel(owner, repo, name, colorHex, description)
+    }.onSuccess {
+        repoLabelsCache.invalidate(RepoKey(owner, repo))
+    }
+
+    suspend fun getRepoMilestones(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<List<MilestoneSummary>> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            repoMilestonesCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchRepoMilestones(owner, repo)
+        }.onSuccess {
+            repoMilestonesCache.put(key, it)
+        }
+    }
+
+    suspend fun getRepoAssignees(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<List<UserSummary>> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            repoAssigneesCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchRepoAssignees(owner, repo)
+        }.onSuccess {
+            repoAssigneesCache.put(key, it)
+        }
+    }
+
+    suspend fun updateIssueOrPullMetadata(
+        owner: String,
+        repo: String,
+        number: Int,
+        labels: List<String>? = null,
+        assignees: List<String>? = null,
+        milestoneNumber: Int? = null,
+        clearMilestone: Boolean = false
+    ): Result<Unit> = runCatching {
+        restService.updateIssueMetadata(owner, repo, number, labels, assignees, milestoneNumber, clearMilestone)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
+        myIssuesCache.clear()
+        repoIssuesCache.invalidateWhere { it.owner == owner && it.repo == repo }
     }
 }

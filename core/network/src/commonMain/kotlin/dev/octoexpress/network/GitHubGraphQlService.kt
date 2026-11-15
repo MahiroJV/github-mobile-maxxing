@@ -11,6 +11,7 @@ import dev.octoexpress.model.IssueOrPullState
 import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.LabelTag
+import dev.octoexpress.model.MilestoneSummary
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.TimelineEvent
@@ -227,6 +228,7 @@ class GitHubGraphQlService(
                     author { login avatarUrl url }
                     labels(first: 10) { nodes { name color description } }
                     assignees(first: 6) { nodes { login avatarUrl url } }
+                    milestone { number title description state dueOn }
                     timelineItems(first: 50, itemTypes: [ISSUE_COMMENT, CLOSED_EVENT, REOPENED_EVENT]) {
                       nodes {
                         __typename
@@ -270,6 +272,7 @@ class GitHubGraphQlService(
                     author { login avatarUrl url }
                     labels(first: 10) { nodes { name color description } }
                     assignees(first: 6) { nodes { login avatarUrl url } }
+                    milestone { number title description state dueOn }
                     commits(last: 1) {
                       nodes {
                         commit {
@@ -394,6 +397,20 @@ class GitHubGraphQlService(
         val assignees = item.obj("assignees")?.arr("nodes")
             ?.mapNotNull { (it as? JsonObject)?.let(::parseUser) } ?: emptyList()
 
+        val milestone = item.obj("milestone")?.let { ms ->
+            val num = ms.int("number")
+            val mTitle = ms.str("title")
+            if (num != null && mTitle != null) {
+                MilestoneSummary(
+                    number = num,
+                    title = mTitle,
+                    description = ms.str("description"),
+                    state = ms.str("state") ?: "OPEN",
+                    dueOn = ms.str("dueOn")
+                )
+            } else null
+        }
+
         return IssueOrPullDetail(
             id = item.str("id") ?: "",
             number = item.int("number") ?: number,
@@ -410,6 +427,7 @@ class GitHubGraphQlService(
             updatedAt = item.str("updatedAt") ?: "",
             labels = parseLabels(item.obj("labels")?.arr("nodes")),
             assignees = assignees,
+            milestone = milestone,
             headRefName = item.str("headRefName"),
             baseRefName = item.str("baseRefName"),
             additions = item.int("additions") ?: 0,

@@ -1,5 +1,6 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,10 +18,14 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -30,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,17 +55,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
 import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.FileDiff
+import com.composables.icons.lucide.Flag
 import com.composables.icons.lucide.GitCommitHorizontal
 import com.composables.icons.lucide.GitMerge
 import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.MessageSquarePlus
+import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Send
+import com.composables.icons.lucide.Tag
+import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
@@ -67,10 +79,13 @@ import dev.octoexpress.auth.openUrlInBrowser
 import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
 import dev.octoexpress.model.IssueOrPullState
+import dev.octoexpress.model.LabelTag
 import dev.octoexpress.model.MergeMethod
+import dev.octoexpress.model.MilestoneSummary
 import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TimelineEvent
+import dev.octoexpress.model.UserSummary
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubLabelChip
 import dev.octoexpress.ui.components.GitHubMarkdown
@@ -116,6 +131,20 @@ fun IssuePullDetailPane(
     var reviewEvent by remember { mutableStateOf(ReviewEvent.APPROVE) }
     var selectedMergeMethod by remember { mutableStateOf(MergeMethod.SQUASH) }
     var actionBusy by remember { mutableStateOf(false) }
+
+    var showLabelsDialog by remember { mutableStateOf(false) }
+    var availableLabels by remember(target) { mutableStateOf<List<LabelTag>>(emptyList()) }
+    var selectedLabelNames by remember(target) { mutableStateOf<Set<String>>(emptySet()) }
+    var newLabelName by remember { mutableStateOf("") }
+    var newLabelColor by remember { mutableStateOf("6E40C9") }
+
+    var showAssigneesDialog by remember { mutableStateOf(false) }
+    var availableAssignees by remember(target) { mutableStateOf<List<UserSummary>>(emptyList()) }
+    var selectedAssigneeLogins by remember(target) { mutableStateOf<Set<String>>(emptySet()) }
+
+    var showMilestoneDialog by remember { mutableStateOf(false) }
+    var availableMilestones by remember(target) { mutableStateOf<List<MilestoneSummary>>(emptyList()) }
+    var selectedMilestoneNumber by remember(target) { mutableStateOf<Int?>(null) }
 
     val scope = rememberCoroutineScope()
 
@@ -249,7 +278,36 @@ fun IssuePullDetailPane(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             item {
-                                DetailHeaderCard(item)
+                                DetailHeaderCard(
+                                    item = item,
+                                    onEditLabels = {
+                                        selectedLabelNames = item.labels.map { it.name }.toSet()
+                                        showLabelsDialog = true
+                                        scope.launch {
+                                            container.repository.getRepoLabels(target.owner, target.repo)
+                                                .onSuccess { availableLabels = it }
+                                                .onFailure { onMessage(it.message ?: "Failed to load labels") }
+                                        }
+                                    },
+                                    onEditAssignees = {
+                                        selectedAssigneeLogins = item.assignees.map { it.login }.toSet()
+                                        showAssigneesDialog = true
+                                        scope.launch {
+                                            container.repository.getRepoAssignees(target.owner, target.repo)
+                                                .onSuccess { availableAssignees = it }
+                                                .onFailure { onMessage(it.message ?: "Failed to load assignees") }
+                                        }
+                                    },
+                                    onEditMilestone = {
+                                        selectedMilestoneNumber = item.milestone?.number
+                                        showMilestoneDialog = true
+                                        scope.launch {
+                                            container.repository.getRepoMilestones(target.owner, target.repo)
+                                                .onSuccess { availableMilestones = it }
+                                                .onFailure { onMessage(it.message ?: "Failed to load milestones") }
+                                        }
+                                    }
+                                )
                             }
 
                             if (item.body.isNotBlank()) {
@@ -510,11 +568,278 @@ fun IssuePullDetailPane(
             }
         )
     }
+
+    if (showLabelsDialog) {
+        AlertDialog(
+            onDismissRequest = { showLabelsDialog = false },
+            title = { Text("Manage Labels") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().height(210.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (availableLabels.isEmpty()) {
+                            Text("No labels found in repository.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        availableLabels.forEach { label ->
+                            val checked = label.name in selectedLabelNames
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedLabelNames = if (checked) {
+                                            selectedLabelNames - label.name
+                                        } else {
+                                            selectedLabelNames + label.name
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { isChecked ->
+                                        selectedLabelNames = if (isChecked) {
+                                            selectedLabelNames + label.name
+                                        } else {
+                                            selectedLabelNames - label.name
+                                        }
+                                    }
+                                )
+                                GitHubLabelChip(name = label.name, colorHex = label.colorHex)
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = newLabelName,
+                            onValueChange = { newLabelName = it },
+                            label = { Text("New label") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilledTonalIconButton(
+                            enabled = newLabelName.isNotBlank() && !actionBusy,
+                            onClick = {
+                                val name = newLabelName.trim()
+                                scope.launch {
+                                    actionBusy = true
+                                    container.repository.createRepoLabel(target.owner, target.repo, name, newLabelColor)
+                                        .onSuccess { created ->
+                                            availableLabels = (availableLabels + created).distinctBy { it.name }
+                                            selectedLabelNames = selectedLabelNames + created.name
+                                            newLabelName = ""
+                                            onMessage("Created label ${created.name}")
+                                        }
+                                        .onFailure { onMessage(it.message ?: "Failed to create label") }
+                                    actionBusy = false
+                                }
+                            }
+                        ) {
+                            Icon(Lucide.Plus, contentDescription = "Create label")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !actionBusy,
+                    onClick = {
+                        val nextLabels = selectedLabelNames.toList()
+                        showLabelsDialog = false
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.updateIssueOrPullMetadata(
+                                owner = target.owner,
+                                repo = target.repo,
+                                number = target.number,
+                                labels = nextLabels
+                            ).onSuccess {
+                                onMessage("Updated labels")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to update labels")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLabelsDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showAssigneesDialog) {
+        AlertDialog(
+            onDismissRequest = { showAssigneesDialog = false },
+            title = { Text("Manage Assignees") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().height(250.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (availableAssignees.isEmpty()) {
+                        Text("No assignable users returned.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    availableAssignees.forEach { user ->
+                        val checked = user.login in selectedAssigneeLogins
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedAssigneeLogins = if (checked) {
+                                        selectedAssigneeLogins - user.login
+                                    } else {
+                                        selectedAssigneeLogins + user.login
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { isChecked ->
+                                    selectedAssigneeLogins = if (isChecked) {
+                                        selectedAssigneeLogins + user.login
+                                    } else {
+                                        selectedAssigneeLogins - user.login
+                                    }
+                                }
+                            )
+                            UserAvatar(user.avatarUrl, user.login, sizeDp = 24)
+                            Text("@${user.login}", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !actionBusy,
+                    onClick = {
+                        val nextAssignees = selectedAssigneeLogins.toList()
+                        showAssigneesDialog = false
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.updateIssueOrPullMetadata(
+                                owner = target.owner,
+                                repo = target.repo,
+                                number = target.number,
+                                assignees = nextAssignees
+                            ).onSuccess {
+                                onMessage("Updated assignees")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to update assignees")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAssigneesDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showMilestoneDialog) {
+        AlertDialog(
+            onDismissRequest = { showMilestoneDialog = false },
+            title = { Text("Select Milestone") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().height(230.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedMilestoneNumber = null }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedMilestoneNumber == null,
+                            onClick = { selectedMilestoneNumber = null }
+                        )
+                        Text("No milestone", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    availableMilestones.forEach { ms ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedMilestoneNumber = ms.number }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedMilestoneNumber == ms.number,
+                                onClick = { selectedMilestoneNumber = ms.number }
+                            )
+                            Column {
+                                Text(ms.title, style = MaterialTheme.typography.bodyMedium)
+                                ms.dueOn?.take(10)?.let { due ->
+                                    Text("Due $due", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !actionBusy,
+                    onClick = {
+                        val chosen = selectedMilestoneNumber
+                        showMilestoneDialog = false
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.updateIssueOrPullMetadata(
+                                owner = target.owner,
+                                repo = target.repo,
+                                number = target.number,
+                                milestoneNumber = chosen,
+                                clearMilestone = chosen == null
+                            ).onSuccess {
+                                onMessage(if (chosen == null) "Cleared milestone" else "Updated milestone")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to update milestone")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMilestoneDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DetailHeaderCard(item: IssueOrPullDetail) {
+private fun DetailHeaderCard(
+    item: IssueOrPullDetail,
+    onEditLabels: () -> Unit,
+    onEditAssignees: () -> Unit,
+    onEditMilestone: () -> Unit
+) {
     val (stateLabel, stateBg, stateFg) = when {
         item.isDraft -> Triple(
             "DRAFT",
@@ -554,7 +879,13 @@ private fun DetailHeaderCard(item: IssueOrPullDetail) {
                     label = stateLabel,
                     containerColor = stateBg,
                     contentColor = stateFg,
-                    icon = if (item.kind == IssueOrPullKind.PULL_REQUEST) Lucide.GitPullRequest else Lucide.CircleDot
+                    icon = when {
+                        item.isDraft -> Lucide.Pencil
+                        item.state == IssueOrPullState.MERGED -> Lucide.GitMerge
+                        item.state == IssueOrPullState.CLOSED -> Lucide.CircleCheck
+                        item.kind == IssueOrPullKind.PULL_REQUEST -> Lucide.GitPullRequest
+                        else -> Lucide.CircleDot
+                    }
                 )
                 item.checkRollup?.let { rollup ->
                     val checkColor = when (rollup.state) {
@@ -614,6 +945,52 @@ private fun DetailHeaderCard(item: IssueOrPullDetail) {
                         GitHubLabelChip(name = label.name, colorHex = label.colorHex)
                     }
                 }
+            }
+
+            if (item.assignees.isNotEmpty() || item.milestone != null) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    item.assignees.forEach { user ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            UserAvatar(user.avatarUrl, user.login, sizeDp = 20)
+                            Text("@${user.login}", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    item.milestone?.let { ms ->
+                        ExpressiveStatusPill(
+                            label = ms.title,
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            icon = Lucide.Flag
+                        )
+                    }
+                }
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AssistChip(
+                    onClick = onEditLabels,
+                    leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    label = { Text("Labels (${item.labels.size})") }
+                )
+                AssistChip(
+                    onClick = onEditAssignees,
+                    leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    label = { Text("Assignees (${item.assignees.size})") }
+                )
+                AssistChip(
+                    onClick = onEditMilestone,
+                    leadingIcon = { Icon(Lucide.Flag, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    label = { Text(item.milestone?.title ?: "Milestone") }
+                )
             }
         }
     }

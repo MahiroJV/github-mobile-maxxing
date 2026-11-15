@@ -11,6 +11,7 @@ import dev.octoexpress.model.IssueOrPullState
 import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.LabelTag
 import dev.octoexpress.model.MergeMethod
+import dev.octoexpress.model.MilestoneSummary
 import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationSubjectType
 import dev.octoexpress.model.NotificationThread
@@ -39,10 +40,14 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -294,6 +299,44 @@ private data class RestCodeItemDto(
 @Serializable
 private data class RestCodeSearchResponse(
     val items: List<RestCodeItemDto> = emptyList()
+)
+
+@Serializable
+private data class CreateRepoRequest(
+    val name: String,
+    val description: String = "",
+    val private: Boolean = false,
+    @SerialName("auto_init") val autoInit: Boolean = true
+)
+
+@Serializable
+private data class SubscriptionRequest(
+    val subscribed: Boolean,
+    val ignored: Boolean = false
+)
+
+@Serializable
+private data class SubscriptionResponse(
+    val subscribed: Boolean = false,
+    val ignored: Boolean = false
+)
+
+@Serializable
+private data class CreateLabelRequest(
+    val name: String,
+    val color: String,
+    val description: String = ""
+)
+
+@Serializable
+private data class RestMilestoneDto(
+    val number: Int,
+    val title: String,
+    val description: String? = null,
+    val state: String = "open",
+    @SerialName("due_on") val dueOn: String? = null,
+    @SerialName("open_issues") val openIssues: Int = 0,
+    @SerialName("closed_issues") val closedIssues: Int = 0
 )
 
 class GitHubRestService(
@@ -804,6 +847,187 @@ class GitHubRestService(
     suspend fun fetchTrendingRepositories(language: String? = null, perPage: Int = 25): List<RepoSummary> {
         val langPart = language?.trim()?.takeIf { it.isNotEmpty() }?.let { " language:$it" } ?: ""
         return searchRepositoriesRest(query = "stars:>500$langPart", perPage = perPage)
+    }
+
+    suspend fun createRepositoryRest(
+        name: String,
+        description: String = "",
+        isPrivate: Boolean = false,
+        autoInit: Boolean = true
+    ): RepoSummary {
+        val res = httpClient.post("$baseUrl/user/repos") {
+            contentType(ContentType.Application.Json)
+            setBody(CreateRepoRequest(name = name.trim(), description = description.trim(), private = isPrivate, autoInit = autoInit))
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to create repository (${res.status.value})")
+        }
+        return res.body<RestRepoDto>().toRepoSummary()
+    }
+
+    suspend fun forkRepositoryRest(owner: String, repo: String): RepoSummary {
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/forks") {
+            header(HttpHeaders.ContentLength, "0")
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to fork repository (${res.status.value})")
+        }
+        return res.body<RestRepoDto>().toRepoSummary()
+    }
+
+    suspend fun fetchRepoSubscription(owner: String, repo: String): Boolean {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/subscription")
+        if (res.status.value == 404) return false
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to read watch status (${res.status.value})")
+        }
+        val dto = res.body<SubscriptionResponse>()
+        return dto.subscribed && !dto.ignored
+    }
+
+    suspend fun setRepoSubscription(owner: String, repo: String, subscribed: Boolean) {
+        val url = "$baseUrl/repos/$owner/$repo/subscription"
+        val res = if (subscribed) {
+            httpClient.put(url) {
+                contentType(ContentType.Application.Json)
+                setBody(SubscriptionRequest(subscribed = true, ignored = false))
+            }
+        } else {
+            httpClient.delete(url)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to update watch status (${res.status.value})")
+        }
+    }
+
+    suspend fun fetchRepoStargazers(owner: String, repo: String, perPage: Int = 40): List<UserSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/stargazers") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load stargazers (${res.status.value})")
+        }
+        return res.body<List<RestUserFollowItemDto>>().map {
+            UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
+        }
+    }
+
+    suspend fun fetchRepoForks(owner: String, repo: String, perPage: Int = 30): List<RepoSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/forks") {
+            parameter("sort", "stargazers")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load forks (${res.status.value})")
+        }
+        return res.body<List<RestRepoDto>>().map { it.toRepoSummary() }
+    }
+
+    suspend fun fetchRepoContributors(owner: String, repo: String, perPage: Int = 30): List<UserSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/contributors") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load contributors (${res.status.value})")
+        }
+        return res.body<List<RestUserFollowItemDto>>().map {
+            UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
+        }
+    }
+
+    suspend fun fetchRepoLabels(owner: String, repo: String, perPage: Int = 100): List<LabelTag> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/labels") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load labels (${res.status.value})")
+        }
+        return res.body<List<RestSearchLabelDto>>().map {
+            LabelTag(name = it.name, colorHex = it.color, description = it.description)
+        }
+    }
+
+    suspend fun createRepoLabel(
+        owner: String,
+        repo: String,
+        name: String,
+        colorHex: String,
+        description: String = ""
+    ): LabelTag {
+        val cleanColor = colorHex.removePrefix("#").trim().take(6).ifBlank { "6E40C9" }
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/labels") {
+            contentType(ContentType.Application.Json)
+            setBody(CreateLabelRequest(name = name.trim(), color = cleanColor, description = description.trim()))
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to create label (${res.status.value})")
+        }
+        val dto = res.body<RestSearchLabelDto>()
+        return LabelTag(name = dto.name, colorHex = dto.color, description = dto.description)
+    }
+
+    suspend fun fetchRepoMilestones(owner: String, repo: String, perPage: Int = 50): List<MilestoneSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/milestones") {
+            parameter("state", "open")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load milestones (${res.status.value})")
+        }
+        return res.body<List<RestMilestoneDto>>().map {
+            MilestoneSummary(
+                number = it.number,
+                title = it.title,
+                description = it.description,
+                state = it.state,
+                dueOn = it.dueOn,
+                openIssues = it.openIssues,
+                closedIssues = it.closedIssues
+            )
+        }
+    }
+
+    suspend fun fetchRepoAssignees(owner: String, repo: String, perPage: Int = 50): List<UserSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/assignees") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load assignees (${res.status.value})")
+        }
+        return res.body<List<RestUserFollowItemDto>>().map {
+            UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
+        }
+    }
+
+    suspend fun updateIssueMetadata(
+        owner: String,
+        repo: String,
+        number: Int,
+        labels: List<String>? = null,
+        assignees: List<String>? = null,
+        milestoneNumber: Int? = null,
+        clearMilestone: Boolean = false
+    ) {
+        val payload = buildJsonObject {
+            if (labels != null) {
+                put("labels", JsonArray(labels.map { JsonPrimitive(it) }))
+            }
+            if (assignees != null) {
+                put("assignees", JsonArray(assignees.map { JsonPrimitive(it) }))
+            }
+            if (clearMilestone) {
+                put("milestone", JsonNull)
+            } else if (milestoneNumber != null) {
+                put("milestone", milestoneNumber)
+            }
+        }
+        val res = httpClient.patch("$baseUrl/repos/$owner/$repo/issues/$number") {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to update metadata (${res.status.value})")
+        }
     }
 
     private fun parseActivityEvent(dto: RestEventDto): ActivityEvent {

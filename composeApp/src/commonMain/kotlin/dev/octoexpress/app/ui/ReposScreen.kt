@@ -2,6 +2,7 @@ package dev.octoexpress.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,8 +40,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -72,6 +75,8 @@ import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
 import com.composables.icons.lucide.Compass
+import com.composables.icons.lucide.Eye
+import com.composables.icons.lucide.EyeOff
 import com.composables.icons.lucide.File
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Flame
@@ -171,6 +176,10 @@ fun ReposScreen(
                     selectedInitialFilePath = null
                 },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
+                onOpenRepo = { nextRepo ->
+                    selectedInitialFilePath = null
+                    selectedRepo = nextRepo
+                },
                 onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
@@ -193,7 +202,8 @@ fun ReposScreen(
                     )
                 },
                 onSelectIssuePull = { selectedIssueTarget = it },
-                onSelectUser = onOpenUser
+                onSelectUser = onOpenUser,
+                onMessage = onMessage
             )
         }
     }
@@ -206,7 +216,8 @@ private fun RepoListPane(
     onSelectRepo: (RepoSummary) -> Unit,
     onSelectCodeHit: (CodeSearchHit) -> Unit,
     onSelectIssuePull: (IssuePullTarget) -> Unit,
-    onSelectUser: (String) -> Unit
+    onSelectUser: (String) -> Unit,
+    onMessage: (String) -> Unit
 ) {
     var activeTab by remember { mutableStateOf(RepoListTab.MINE) }
     var searchKind by remember { mutableStateOf(GlobalSearchKind.REPOSITORIES) }
@@ -228,6 +239,12 @@ private fun RepoListPane(
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var requestSeq by remember { mutableStateOf(0) }
+    var showCreateRepoDialog by remember { mutableStateOf(false) }
+    var newRepoName by remember { mutableStateOf("") }
+    var newRepoDesc by remember { mutableStateOf("") }
+    var newRepoPrivate by remember { mutableStateOf(false) }
+    var newRepoAutoInit by remember { mutableStateOf(true) }
+    var createRepoBusy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
@@ -371,6 +388,14 @@ private fun RepoListPane(
                     style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.weight(1f)
                 )
+                FilledTonalButton(
+                    onClick = { showCreateRepoDialog = true },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New")
+                }
                 IconButton(onClick = { loadRepos(forceRefresh = true) }) {
                     Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
                 }
@@ -640,6 +665,81 @@ private fun RepoListPane(
             }
         }
     }
+
+    if (showCreateRepoDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!createRepoBusy) showCreateRepoDialog = false },
+            title = { Text("Create repository") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = newRepoName,
+                        onValueChange = { newRepoName = it },
+                        label = { Text("Repository name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newRepoDesc,
+                        onValueChange = { newRepoDesc = it },
+                        label = { Text("Description (optional)") },
+                        maxLines = 3,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Lucide.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Private repository", modifier = Modifier.weight(1f))
+                        Switch(checked = newRepoPrivate, onCheckedChange = { newRepoPrivate = it })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Lucide.File, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Initialize with README", modifier = Modifier.weight(1f))
+                        Switch(checked = newRepoAutoInit, onCheckedChange = { newRepoAutoInit = it })
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = newRepoName.isNotBlank() && !createRepoBusy,
+                    onClick = {
+                        val rName = newRepoName.trim()
+                        val rDesc = newRepoDesc.trim()
+                        createRepoBusy = true
+                        scope.launch {
+                            container.repository.createRepository(rName, rDesc, newRepoPrivate, newRepoAutoInit)
+                                .onSuccess { created ->
+                                    createRepoBusy = false
+                                    showCreateRepoDialog = false
+                                    newRepoName = ""
+                                    newRepoDesc = ""
+                                    onMessage("Created ${created.fullName}")
+                                    onSelectRepo(created)
+                                }
+                                .onFailure {
+                                    createRepoBusy = false
+                                    onMessage(it.message ?: "Failed to create repository")
+                                }
+                        }
+                    }
+                ) {
+                    Text(if (createRepoBusy) "Creating..." else "Create")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !createRepoBusy, onClick = { showCreateRepoDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -890,6 +990,12 @@ fun RepoSummaryCard(
     }
 }
 
+private enum class RepoPeopleTab(val label: String) {
+    STARGAZERS("Stars"),
+    FORKS("Forks"),
+    CONTRIBUTORS("Contributors")
+}
+
 @OptIn(
     ExperimentalLayoutApi::class,
     ExperimentalMaterial3ExpressiveApi::class,
@@ -902,6 +1008,7 @@ fun RepoDetailScreen(
     initialFilePath: String? = null,
     onBack: () -> Unit,
     onOpenIssueOrPull: (IssuePullTarget) -> Unit,
+    onOpenRepo: (RepoSummary) -> Unit = {},
     onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
@@ -911,6 +1018,10 @@ fun RepoDetailScreen(
     }
     var currentRef by remember(repo.fullName) { mutableStateOf(detail?.summary?.defaultBranch ?: repo.defaultBranch) }
     var isStarred by remember(repo.fullName) { mutableStateOf(detail?.summary?.viewerHasStarred ?: repo.viewerHasStarred) }
+    var isWatching by remember(repo.fullName) {
+        mutableStateOf(container.repository.peekRepoSubscription(repo.owner, repo.name) ?: false)
+    }
+    var forkBusy by remember(repo.fullName) { mutableStateOf(false) }
     var activeTab by remember(repo.fullName) { mutableStateOf(RepoDetailTab.CODE) }
 
     var currentPath by remember(repo.fullName) { mutableStateOf("") }
@@ -944,6 +1055,33 @@ fun RepoDetailScreen(
     var showCreateIssueDialog by remember { mutableStateOf(false) }
     var newIssueTitle by remember { mutableStateOf("") }
     var newIssueBody by remember { mutableStateOf("") }
+
+    var showPeopleDialog by remember { mutableStateOf(false) }
+    var peopleTab by remember { mutableStateOf(RepoPeopleTab.STARGAZERS) }
+    var stargazersList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
+    var forksList by remember(repo.fullName) { mutableStateOf<List<RepoSummary>?>(null) }
+    var contributorsList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
+    var peopleLoading by remember { mutableStateOf(false) }
+
+    fun openPeopleTab(tab: RepoPeopleTab) {
+        peopleTab = tab
+        showPeopleDialog = true
+        scope.launch {
+            peopleLoading = true
+            when (tab) {
+                RepoPeopleTab.STARGAZERS -> container.repository.getRepoStargazers(repo.owner, repo.name)
+                    .onSuccess { stargazersList = it }
+                    .onFailure { onMessage(it.message ?: "Failed to load stargazers") }
+                RepoPeopleTab.FORKS -> container.repository.getRepoForks(repo.owner, repo.name)
+                    .onSuccess { forksList = it }
+                    .onFailure { onMessage(it.message ?: "Failed to load forks") }
+                RepoPeopleTab.CONTRIBUTORS -> container.repository.getRepoContributors(repo.owner, repo.name)
+                    .onSuccess { contributorsList = it }
+                    .onFailure { onMessage(it.message ?: "Failed to load contributors") }
+            }
+            peopleLoading = false
+        }
+    }
 
     fun loadDirectory(path: String, ref: String, forceRefresh: Boolean = false) {
         scope.launch {
@@ -1066,7 +1204,11 @@ fun RepoDetailScreen(
             isLoading = false
         }
 
-        // Prefetch Open Issues & Open PRs in background so switching tabs is instant
+        // Prefetch Open Issues, Open PRs & Watch state in background
+        scope.launch {
+            container.repository.getRepoSubscription(repo.owner, repo.name)
+                .onSuccess { isWatching = it }
+        }
         scope.launch {
             container.repository.getRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = false, stateFilter = IssueStateFilter.OPEN)
                 .onSuccess { if (issueStateFilter == IssueStateFilter.OPEN && repoIssues == null) repoIssues = it }
@@ -1111,6 +1253,22 @@ fun RepoDetailScreen(
                             .weight(1f)
                             .clickable(enabled = repo.owner.isNotBlank()) { onOpenUser(repo.owner) }
                     )
+                    FilledTonalButton(
+                        onClick = { showCreateIssueDialog = true },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Issue", maxLines = 1, softWrap = false)
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     StarActionButton(
                         isStarred = isStarred,
                         count = (detail?.summary?.stargazersCount ?: repo.stargazersCount).let { base ->
@@ -1127,11 +1285,80 @@ fun RepoDetailScreen(
                             }
                         }
                     )
-                    Spacer(Modifier.width(8.dp))
-                    FilledTonalButton(onClick = { showCreateIssueDialog = true }) {
-                        Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Issue")
+                    if (isWatching) {
+                        FilledTonalButton(
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            onClick = {
+                                isWatching = false
+                                scope.launch {
+                                    container.repository.setRepoSubscription(repo.owner, repo.name, false)
+                                        .onSuccess { onMessage("Unwatched ${repo.fullName}") }
+                                        .onFailure {
+                                            isWatching = true
+                                            onMessage(it.message ?: "Watch update failed")
+                                        }
+                                }
+                            }
+                        ) {
+                            Icon(Lucide.Eye, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Watching", maxLines = 1, softWrap = false)
+                        }
+                    } else {
+                        OutlinedButton(
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            onClick = {
+                                isWatching = true
+                                scope.launch {
+                                    container.repository.setRepoSubscription(repo.owner, repo.name, true)
+                                        .onSuccess { onMessage("Watching ${repo.fullName}") }
+                                        .onFailure {
+                                            isWatching = false
+                                            onMessage(it.message ?: "Watch update failed")
+                                        }
+                                }
+                            }
+                        ) {
+                            Icon(Lucide.EyeOff, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Watch", maxLines = 1, softWrap = false)
+                        }
+                    }
+                    OutlinedButton(
+                        enabled = !forkBusy,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        onClick = {
+                            forkBusy = true
+                            scope.launch {
+                                container.repository.forkRepository(repo.owner, repo.name)
+                                    .onSuccess { forked ->
+                                        forkBusy = false
+                                        onMessage("Forked to ${forked.fullName}")
+                                        onOpenRepo(forked)
+                                    }
+                                    .onFailure {
+                                        forkBusy = false
+                                        onMessage(it.message ?: "Fork failed")
+                                    }
+                            }
+                        }
+                    ) {
+                        Icon(Lucide.GitFork, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        val forksNum = detail?.summary?.forksCount ?: repo.forksCount
+                        Text(
+                            text = if (forkBusy) "Forking..." else "Fork ${formatCompactCount(forksNum)}",
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                    OutlinedButton(
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        onClick = { openPeopleTab(RepoPeopleTab.STARGAZERS) }
+                    ) {
+                        Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Network", maxLines = 1, softWrap = false)
                     }
                 }
 
@@ -1428,6 +1655,105 @@ fun RepoDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showCreateIssueDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showPeopleDialog) {
+        AlertDialog(
+            onDismissRequest = { showPeopleDialog = false },
+            title = { Text("${repo.name} Network") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OctoConnectedButtonGroup(
+                        options = RepoPeopleTab.entries,
+                        selected = peopleTab,
+                        onSelect = { openPeopleTab(it) },
+                        labelProvider = { it.label },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (peopleLoading) {
+                        OctoWavyProgress()
+                    }
+                    Column(
+                        modifier = Modifier.fillMaxWidth().height(280.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        when (peopleTab) {
+                            RepoPeopleTab.STARGAZERS -> {
+                                val list = stargazersList.orEmpty()
+                                if (!peopleLoading && list.isEmpty()) {
+                                    Text("No stargazers yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                list.forEach { user ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                showPeopleDialog = false
+                                                onOpenUser(user.login)
+                                            }
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        UserAvatar(user.avatarUrl, user.login, sizeDp = 28)
+                                        Text("@${user.login}", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                            RepoPeopleTab.FORKS -> {
+                                val list = forksList.orEmpty()
+                                if (!peopleLoading && list.isEmpty()) {
+                                    Text("No forks yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                list.forEach { fork ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                showPeopleDialog = false
+                                                onOpenRepo(fork)
+                                            }
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Icon(Lucide.GitFork, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Text(fork.fullName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                        Icon(OctoFilledIcons.Star, contentDescription = null, tint = OctoStarAmber, modifier = Modifier.size(13.dp))
+                                        Text(formatCompactCount(fork.stargazersCount), style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+                            RepoPeopleTab.CONTRIBUTORS -> {
+                                val list = contributorsList.orEmpty()
+                                if (!peopleLoading && list.isEmpty()) {
+                                    Text("No contributors listed.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                list.forEach { user ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                showPeopleDialog = false
+                                                onOpenUser(user.login)
+                                            }
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        UserAvatar(user.avatarUrl, user.login, sizeDp = 28)
+                                        Text("@${user.login}", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPeopleDialog = false }) { Text("Close") }
             }
         )
     }

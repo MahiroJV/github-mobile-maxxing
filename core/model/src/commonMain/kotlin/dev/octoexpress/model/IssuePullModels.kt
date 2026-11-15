@@ -52,6 +52,17 @@ data class LabelTag(
 )
 
 @Serializable
+data class MilestoneSummary(
+    val number: Int,
+    val title: String,
+    val description: String? = null,
+    val state: String = "open",
+    val dueOn: String? = null,
+    val openIssues: Int = 0,
+    val closedIssues: Int = 0
+)
+
+@Serializable
 data class CheckRollupSummary(
     val state: String, // SUCCESS, FAILURE, PENDING, EXPECTED, ERROR
     val totalCount: Int = 0,
@@ -133,6 +144,7 @@ data class IssueOrPullDetail(
     val updatedAt: String,
     val labels: List<LabelTag> = emptyList(),
     val assignees: List<UserSummary> = emptyList(),
+    val milestone: MilestoneSummary? = null,
     val headRefName: String? = null,
     val baseRefName: String? = null,
     val additions: Int = 0,
