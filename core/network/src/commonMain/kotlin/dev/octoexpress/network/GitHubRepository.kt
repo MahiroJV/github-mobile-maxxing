@@ -1,7 +1,9 @@
 package dev.octoexpress.network
 
 import dev.octoexpress.auth.SessionManager
+import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.BranchRef
+import dev.octoexpress.model.ContributionCalendar
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullDetail
@@ -122,6 +124,9 @@ class GitHubRepository(
     private val dirCache = LruMemoryCache<RepoPathKey, List<TreeEntry>>(ttl = 180.seconds, maxEntries = 96)
     private val fileCache = LruMemoryCache<RepoPathKey, FileContent>(ttl = 180.seconds, maxEntries = 64)
     private val readmeCache = LruMemoryCache<RepoPathKey, String?>(ttl = 180.seconds, maxEntries = 32)
+    private val contributionCache = LruMemoryCache<String, ContributionCalendar>(ttl = 300.seconds, maxEntries = 12)
+    private val receivedEventsCache = LruMemoryCache<String, List<ActivityEvent>>(ttl = 60.seconds, maxEntries = 8)
+    private val userEventsCache = LruMemoryCache<String, List<ActivityEvent>>(ttl = 60.seconds, maxEntries = 12)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -136,6 +141,9 @@ class GitHubRepository(
         dirCache.clear()
         fileCache.clear()
         readmeCache.clear()
+        contributionCache.clear()
+        receivedEventsCache.clear()
+        userEventsCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -178,6 +186,15 @@ class GitHubRepository(
 
     fun peekReadme(owner: String, repo: String, ref: String? = null): String? =
         readmeCache.peek(RepoPathKey(owner, repo, "", ref))
+
+    fun peekContributionCalendar(login: String): ContributionCalendar? =
+        contributionCache.peek(login)
+
+    fun peekReceivedEvents(login: String): List<ActivityEvent>? =
+        receivedEventsCache.peek(login)
+
+    fun peekUserEvents(login: String): List<ActivityEvent>? =
+        userEventsCache.peek(login)
 
     // ---- Cached / Parallel Network Operations ----
 
@@ -492,5 +509,47 @@ class GitHubRepository(
     }.onSuccess {
         repoDetailCache.invalidate(RepoKey(owner, repo))
         viewerReposCache.invalidate("STARRED")
+    }
+
+    suspend fun getContributionCalendar(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<ContributionCalendar> {
+        if (!forceRefresh) {
+            contributionCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            graphQlService.fetchContributionCalendar(login)
+        }.onSuccess {
+            contributionCache.put(login, it)
+        }
+    }
+
+    suspend fun getReceivedEvents(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<List<ActivityEvent>> {
+        if (!forceRefresh) {
+            receivedEventsCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchReceivedEvents(login)
+        }.onSuccess {
+            receivedEventsCache.put(login, it)
+        }
+    }
+
+    suspend fun getUserEvents(
+        login: String,
+        forceRefresh: Boolean = false
+    ): Result<List<ActivityEvent>> {
+        if (!forceRefresh) {
+            userEventsCache.peekIfFresh(login)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchUserEvents(login)
+        }.onSuccess {
+            userEventsCache.put(login, it)
+        }
     }
 }

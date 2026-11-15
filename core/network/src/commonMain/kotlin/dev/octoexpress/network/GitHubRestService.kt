@@ -1,5 +1,7 @@
 package dev.octoexpress.network
 
+import dev.octoexpress.model.ActivityEvent
+import dev.octoexpress.model.ActivityEventKind
 import dev.octoexpress.model.BranchRef
 import dev.octoexpress.model.FileChangeStatus
 import dev.octoexpress.model.FileContent
@@ -12,6 +14,7 @@ import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
+import dev.octoexpress.model.UserSummary
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -28,6 +31,11 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -163,6 +171,27 @@ private data class RestRepoDto(
 @Serializable
 private data class RestRepoSearchResponse(
     val items: List<RestRepoDto> = emptyList()
+)
+
+@Serializable
+private data class RestEventActorDto(
+    val login: String = "ghost",
+    @SerialName("avatar_url") val avatarUrl: String = ""
+)
+
+@Serializable
+private data class RestEventRepoDto(
+    val name: String = ""
+)
+
+@Serializable
+private data class RestEventDto(
+    val id: String,
+    val type: String = "",
+    val actor: RestEventActorDto = RestEventActorDto(),
+    val repo: RestEventRepoDto = RestEventRepoDto(),
+    val payload: JsonObject? = null,
+    @SerialName("created_at") val createdAt: String = ""
 )
 
 class GitHubRestService(
@@ -459,6 +488,169 @@ class GitHubRestService(
             throw GitHubApiException(res.status.value, "Repository search failed (${res.status.value})")
         }
         return res.body<RestRepoSearchResponse>().items.map { it.toRepoSummary() }
+    }
+
+    suspend fun fetchReceivedEvents(login: String, page: Int = 1, perPage: Int = 30): List<ActivityEvent> {
+        val res = httpClient.get("$baseUrl/users/$login/received_events") {
+            parameter("page", page)
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load activity feed (${res.status.value})")
+        }
+        return res.body<List<RestEventDto>>().map(::parseActivityEvent)
+    }
+
+    suspend fun fetchUserEvents(login: String, page: Int = 1, perPage: Int = 30): List<ActivityEvent> {
+        val res = httpClient.get("$baseUrl/users/$login/events") {
+            parameter("page", page)
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load user events (${res.status.value})")
+        }
+        return res.body<List<RestEventDto>>().map(::parseActivityEvent)
+    }
+
+    private fun parseActivityEvent(dto: RestEventDto): ActivityEvent {
+        val repoFull = dto.repo.name
+        val repoOwner = repoFull.substringBefore('/', "")
+        val repoName = repoFull.substringAfter('/', repoFull)
+        val payload = dto.payload
+
+        fun pStr(obj: JsonObject?, key: String): String? =
+            obj?.get(key)?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.contentOrNull }
+
+        fun pInt(obj: JsonObject?, key: String): Int? =
+            obj?.get(key)?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.intOrNull }
+
+        fun pObj(obj: JsonObject?, key: String): JsonObject? = obj?.get(key) as? JsonObject
+        fun pArr(obj: JsonObject?, key: String): JsonArray? = obj?.get(key) as? JsonArray
+
+        var detailTitle: String? = null
+        var issueNum: Int? = null
+        var commitSha: String? = null
+        var branchName: String? = null
+        var releaseTag: String? = null
+
+        val kind: ActivityEventKind
+        val summary: String
+
+        when (dto.type) {
+            "PushEvent" -> {
+                kind = ActivityEventKind.PUSH
+                val branch = pStr(payload, "ref")?.removePrefix("refs/heads/") ?: "main"
+                branchName = branch
+                val commits = pArr(payload, "commits")
+                val size = pInt(payload, "size") ?: commits?.size ?: 1
+                val firstCommit = commits?.firstOrNull() as? JsonObject
+                commitSha = pStr(firstCommit, "sha") ?: pStr(payload, "head")
+                detailTitle = pStr(firstCommit, "message")?.lineSequence()?.firstOrNull()
+                summary = "pushed $size commit${if (size == 1) "" else "s"} to $branch"
+            }
+            "PullRequestEvent" -> {
+                kind = ActivityEventKind.PULL_REQUEST
+                val action = pStr(payload, "action") ?: "updated"
+                val pr = pObj(payload, "pull_request")
+                issueNum = pInt(pr, "number") ?: pInt(payload, "number")
+                detailTitle = pStr(pr, "title")
+                val merged = pStr(pr, "merged_at") != null
+                val verb = if (action == "closed" && merged) "merged" else action
+                summary = "$verb pull request${issueNum?.let { " #$it" } ?: ""}"
+            }
+            "IssuesEvent" -> {
+                kind = ActivityEventKind.ISSUES
+                val action = pStr(payload, "action") ?: "updated"
+                val issue = pObj(payload, "issue")
+                issueNum = pInt(issue, "number")
+                detailTitle = pStr(issue, "title")
+                summary = "$action issue${issueNum?.let { " #$it" } ?: ""}"
+            }
+            "IssueCommentEvent" -> {
+                kind = ActivityEventKind.ISSUE_COMMENT
+                val issue = pObj(payload, "issue")
+                issueNum = pInt(issue, "number")
+                detailTitle = pStr(issue, "title")
+                summary = "commented on${issueNum?.let { " #$it" } ?: " thread"}"
+            }
+            "PullRequestReviewEvent", "PullRequestReviewCommentEvent" -> {
+                kind = ActivityEventKind.PULL_REQUEST_REVIEW
+                val pr = pObj(payload, "pull_request")
+                issueNum = pInt(pr, "number")
+                detailTitle = pStr(pr, "title")
+                val state = pStr(pObj(payload, "review"), "state")
+                summary = when (state?.lowercase()) {
+                    "approved" -> "approved pull request${issueNum?.let { " #$it" } ?: ""}"
+                    "changes_requested" -> "requested changes on${issueNum?.let { " #$it" } ?: ""}"
+                    else -> "reviewed pull request${issueNum?.let { " #$it" } ?: ""}"
+                }
+            }
+            "WatchEvent" -> {
+                kind = ActivityEventKind.WATCH
+                summary = "starred repository"
+            }
+            "ForkEvent" -> {
+                kind = ActivityEventKind.FORK
+                val forkee = pObj(payload, "forkee")
+                detailTitle = pStr(forkee, "full_name")
+                summary = "forked repository"
+            }
+            "CreateEvent" -> {
+                kind = ActivityEventKind.CREATE
+                val refType = pStr(payload, "ref_type") ?: "ref"
+                val ref = pStr(payload, "ref")
+                branchName = if (refType == "branch") ref else null
+                summary = if (ref != null) "created $refType $ref" else "created repository"
+            }
+            "DeleteEvent" -> {
+                kind = ActivityEventKind.DELETE
+                val refType = pStr(payload, "ref_type") ?: "ref"
+                val ref = pStr(payload, "ref")
+                summary = "deleted $refType ${ref.orEmpty()}".trim()
+            }
+            "ReleaseEvent" -> {
+                kind = ActivityEventKind.RELEASE
+                val release = pObj(payload, "release")
+                releaseTag = pStr(release, "tag_name")
+                detailTitle = pStr(release, "name") ?: releaseTag
+                val action = pStr(payload, "action") ?: "published"
+                summary = "$action release ${releaseTag.orEmpty()}".trim()
+            }
+            "PublicEvent" -> {
+                kind = ActivityEventKind.PUBLIC
+                summary = "made repository public"
+            }
+            "MemberEvent" -> {
+                kind = ActivityEventKind.MEMBER
+                val memberLogin = pStr(pObj(payload, "member"), "login")
+                val action = pStr(payload, "action") ?: "added"
+                summary = "$action ${memberLogin?.let { "@$it" } ?: "collaborator"}"
+            }
+            else -> {
+                kind = ActivityEventKind.OTHER
+                summary = dto.type.removeSuffix("Event").ifBlank { "activity" }
+            }
+        }
+
+        return ActivityEvent(
+            id = dto.id,
+            kind = kind,
+            actor = UserSummary(
+                login = dto.actor.login,
+                avatarUrl = dto.actor.avatarUrl,
+                htmlUrl = "https://github.com/${dto.actor.login}"
+            ),
+            repoFullName = repoFull,
+            repoOwner = repoOwner,
+            repoName = repoName,
+            summaryText = summary,
+            detailTitle = detailTitle,
+            targetIssueNumber = issueNum,
+            commitSha = commitSha,
+            branchName = branchName,
+            releaseTag = releaseTag,
+            createdAt = dto.createdAt
+        )
     }
 
     private fun parseReason(raw: String): NotificationReason = when (raw.lowercase()) {

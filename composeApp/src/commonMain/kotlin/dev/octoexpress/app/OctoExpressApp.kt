@@ -34,10 +34,12 @@ import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.GitPullRequest
+import com.composables.icons.lucide.House
 import com.composables.icons.lucide.Inbox
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Settings
 import dev.octoexpress.app.notifications.PlatformNotifier
+import dev.octoexpress.app.ui.HomeScreen
 import dev.octoexpress.app.ui.IssuesPullsScreen
 import dev.octoexpress.app.ui.NotificationsScreen
 import dev.octoexpress.app.ui.ReposScreen
@@ -53,6 +55,7 @@ private enum class AppDestination(
     val label: String,
     val icon: ImageVector
 ) {
+    HOME("Home", Lucide.House),
     INBOX("Inbox", Lucide.Inbox),
     ISSUES_PRS("Issues & PRs", Lucide.GitPullRequest),
     REPOS("Repos", Lucide.FolderGit2),
@@ -166,7 +169,7 @@ private fun MainAuthenticatedShell(
     deepLinkTarget: IssuePullTarget?,
     onConsumeDeepLink: () -> Unit
 ) {
-    var currentDestination by remember { mutableStateOf(AppDestination.INBOX) }
+    var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     val unreadCount by container.unreadNotificationCount.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -177,9 +180,9 @@ private fun MainAuthenticatedShell(
         }
     }
 
-    // Android System Back returns to Inbox tab before exiting app
-    BackHandler(enabled = currentDestination != AppDestination.INBOX) {
-        currentDestination = AppDestination.INBOX
+    // Android System Back returns to Home tab before exiting app
+    BackHandler(enabled = currentDestination != AppDestination.HOME) {
+        currentDestination = AppDestination.HOME
     }
 
     val showMessage: (String) -> Unit = { msg ->
@@ -219,6 +222,14 @@ private fun MainAuthenticatedShell(
         ) { innerPadding ->
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                 when (currentDestination) {
+                    AppDestination.HOME -> HomeScreen(
+                        container = container,
+                        unreadCount = unreadCount,
+                        onNavigateInbox = { currentDestination = AppDestination.INBOX },
+                        onNavigateIssuesPrs = { currentDestination = AppDestination.ISSUES_PRS },
+                        onNavigateRepos = { currentDestination = AppDestination.REPOS },
+                        onMessage = showMessage
+                    )
                     AppDestination.INBOX -> NotificationsScreen(
                         container = container,
                         deepLinkTarget = deepLinkTarget,
@@ -235,7 +246,7 @@ private fun MainAuthenticatedShell(
                     )
                     AppDestination.SETTINGS -> SettingsScreen(
                         container = container,
-                        onSignedOut = { currentDestination = AppDestination.INBOX },
+                        onSignedOut = { currentDestination = AppDestination.HOME },
                         onMessage = showMessage
                     )
                 }

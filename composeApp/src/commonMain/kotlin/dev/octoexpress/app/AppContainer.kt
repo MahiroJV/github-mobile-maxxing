@@ -81,6 +81,8 @@ class AppContainer {
             launch { repository.getViewerRepositories(forceRefresh = false) }
             launch { repository.getStarredRepositories(forceRefresh = false) }
             if (!login.isNullOrBlank()) {
+                launch { repository.getContributionCalendar(login, forceRefresh = false) }
+                launch { repository.getReceivedEvents(login, forceRefresh = false) }
                 launch {
                     repository.getMyIssuesAndPulls(
                         preset = IssueFilterPreset.CREATED,

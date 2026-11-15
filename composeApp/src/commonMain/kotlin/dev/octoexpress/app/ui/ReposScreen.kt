@@ -469,7 +469,7 @@ private fun RepoSummaryCard(
     ExperimentalComposeUiApi::class
 )
 @Composable
-private fun RepoDetailScreen(
+fun RepoDetailScreen(
     repo: RepoSummary,
     container: AppContainer,
     onBack: () -> Unit,

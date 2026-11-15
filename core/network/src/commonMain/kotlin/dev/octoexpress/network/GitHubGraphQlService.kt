@@ -1,6 +1,9 @@
 package dev.octoexpress.network
 
 import dev.octoexpress.model.CheckRollupSummary
+import dev.octoexpress.model.ContributionCalendar
+import dev.octoexpress.model.ContributionDay
+import dev.octoexpress.model.ContributionWeek
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
@@ -503,6 +506,58 @@ class GitHubGraphQlService(
             topics = topics,
             watchersCount = repoObj.obj("watchers")?.int("totalCount") ?: 0
         )
+    }
+
+    suspend fun fetchContributionCalendar(login: String): ContributionCalendar {
+        val data = execute(
+            query = """
+                query(${'$'}login: String!) {
+                  user(login: ${'$'}login) {
+                    contributionsCollection {
+                      contributionCalendar {
+                        totalContributions
+                        weeks {
+                          contributionDays {
+                            date
+                            contributionCount
+                            contributionLevel
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+            """.trimIndent(),
+            variables = mapOf("login" to login)
+        )
+        val calendar = data.obj("user")
+            ?.obj("contributionsCollection")
+            ?.obj("contributionCalendar")
+            ?: throw GitHubApiException(404, "Contribution calendar not found for @$login")
+
+        val total = calendar.int("totalContributions") ?: 0
+        val weeks = calendar.arr("weeks")?.mapNotNull { weekEl ->
+            val weekObj = weekEl as? JsonObject ?: return@mapNotNull null
+            val days = weekObj.arr("contributionDays")?.mapNotNull { dayEl ->
+                val dayObj = dayEl as? JsonObject ?: return@mapNotNull null
+                ContributionDay(
+                    date = dayObj.str("date") ?: return@mapNotNull null,
+                    count = dayObj.int("contributionCount") ?: 0,
+                    level = parseContributionLevel(dayObj.str("contributionLevel"))
+                )
+            } ?: emptyList()
+            ContributionWeek(days = days)
+        } ?: emptyList()
+
+        return ContributionCalendar(totalContributions = total, weeks = weeks)
+    }
+
+    private fun parseContributionLevel(raw: String?): Int = when (raw?.uppercase()) {
+        "FIRST_QUARTILE" -> 1
+        "SECOND_QUARTILE" -> 2
+        "THIRD_QUARTILE" -> 3
+        "FOURTH_QUARTILE" -> 4
+        else -> 0
     }
 
     suspend fun fetchRepoIssuesAndPulls(
