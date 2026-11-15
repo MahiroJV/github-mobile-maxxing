@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -169,6 +170,7 @@ import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoPredictiveBackContainer
 import dev.octoexpress.ui.components.OctoPredictiveOverlayHost
 import dev.octoexpress.ui.components.OctoStarAmber
+import dev.octoexpress.ui.components.OctoTopHeaderDefaults
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.StarActionButton
 import dev.octoexpress.ui.components.UserAvatar
@@ -316,7 +318,10 @@ private fun RepoListPane(
         headerTracker.toNestedScrollConnection { !(activeTab == RepoListTab.SEARCH && isSearchFocused) }
     }
     val showExpandedHeader = !headerTracker.isCollapsed || (activeTab == RepoListTab.SEARCH && isSearchFocused)
-    val headerVerticalPadding by animateDpAsState(if (showExpandedHeader) 14.dp else 6.dp)
+    val headerVerticalPadding by animateDpAsState(
+        if (showExpandedHeader) OctoTopHeaderDefaults.ExpandedVerticalPadding
+        else OctoTopHeaderDefaults.CollapsedVerticalPadding
+    )
 
     LaunchedEffect(activeTab, searchKind) {
         headerTracker.expand()
@@ -452,14 +457,15 @@ private fun RepoListPane(
     }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
+        Column(modifier = Modifier.padding(horizontal = OctoTopHeaderDefaults.HorizontalPadding, vertical = headerVerticalPadding)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = OctoTopHeaderDefaults.TitleRowMinHeight),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = if (activeTab == RepoListTab.SEARCH && submittedSearchQuery.isBlank()) "Explore" else "Repositories",
                     style = if (showExpandedHeader) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
                     modifier = Modifier.weight(1f)
                 )
                 FilledTonalButton(
@@ -476,7 +482,7 @@ private fun RepoListPane(
             }
             OctoCollapsibleSection(visible = showExpandedHeader) {
                 Column {
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(OctoTopHeaderDefaults.TabBarTopSpacing))
                     PrimaryTabRow(
                         selectedTabIndex = RepoListTab.entries.indexOf(activeTab).coerceAtLeast(0),
                         containerColor = androidx.compose.ui.graphics.Color.Transparent

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -71,6 +72,7 @@ import dev.octoexpress.ui.components.GitHubLabelChip
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoPredictiveBackContainer
+import dev.octoexpress.ui.components.OctoTopHeaderDefaults
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -160,7 +162,10 @@ fun IssuesPullsScreen(
 
     val headerTracker = remember { RepoHeaderCollapseTracker() }
     val headerNestedScroll = remember(headerTracker) { headerTracker.toNestedScrollConnection() }
-    val headerVerticalPadding by animateDpAsState(if (headerTracker.isCollapsed) 6.dp else 14.dp)
+    val headerVerticalPadding by animateDpAsState(
+        if (headerTracker.isCollapsed) OctoTopHeaderDefaults.CollapsedVerticalPadding
+        else OctoTopHeaderDefaults.ExpandedVerticalPadding
+    )
 
     LaunchedEffect(preset, stateFilter, login) {
         headerTracker.expand()
@@ -186,9 +191,9 @@ fun IssuesPullsScreen(
         listPane = {
             AnimatedPane {
                 Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
+                    Column(modifier = Modifier.padding(horizontal = OctoTopHeaderDefaults.HorizontalPadding, vertical = headerVerticalPadding)) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = OctoTopHeaderDefaults.TitleRowMinHeight),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -218,7 +223,7 @@ fun IssuesPullsScreen(
 
                         OctoCollapsibleSection(visible = !headerTracker.isCollapsed) {
                             Column {
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(OctoTopHeaderDefaults.TabBarTopSpacing))
                                 PrimaryTabRow(
                                     selectedTabIndex = IssueStateFilter.entries.indexOf(stateFilter).coerceAtLeast(0),
                                     containerColor = Color.Transparent

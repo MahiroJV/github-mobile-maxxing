@@ -548,3 +548,12 @@ fun parseHexColor(rawHex: String): Color {
     val rgb = clean.toLongOrNull(16) ?: 0x6E40C9L
     return Color(0xFF000000L or (rgb and 0xFFFFFFL))
 }
+
+/** Shared layout metrics keeping top-level screen title bars and tab strips vertically aligned. */
+object OctoTopHeaderDefaults {
+    val HorizontalPadding = 16.dp
+    val ExpandedVerticalPadding = 14.dp
+    val CollapsedVerticalPadding = 6.dp
+    val TitleRowMinHeight = 48.dp
+    val TabBarTopSpacing = 10.dp
+}

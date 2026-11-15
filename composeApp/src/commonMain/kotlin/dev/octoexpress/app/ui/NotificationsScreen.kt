@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -86,6 +87,7 @@ import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFloatingToolbar
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoPredictiveBackContainer
+import dev.octoexpress.ui.components.OctoTopHeaderDefaults
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -278,7 +280,10 @@ fun NotificationsScreen(
         headerTracker.toNestedScrollConnection { !isFilterInputActive && searchQuery.isEmpty() }
     }
     val showExpandedHeader = !headerTracker.isCollapsed || isFilterInputActive || searchQuery.isNotEmpty()
-    val headerVerticalPadding by animateDpAsState(if (showExpandedHeader) 14.dp else 6.dp)
+    val headerVerticalPadding by animateDpAsState(
+        if (showExpandedHeader) OctoTopHeaderDefaults.ExpandedVerticalPadding
+        else OctoTopHeaderDefaults.CollapsedVerticalPadding
+    )
 
     LaunchedEffect(filter, reasonFilter) {
         headerTracker.expand()
@@ -304,36 +309,32 @@ fun NotificationsScreen(
             AnimatedPane {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = headerVerticalPadding)) {
+                        Column(modifier = Modifier.padding(horizontal = OctoTopHeaderDefaults.HorizontalPadding, vertical = headerVerticalPadding)) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = OctoTopHeaderDefaults.TitleRowMinHeight),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Inbox",
-                                        style = if (showExpandedHeader) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge
-                                    )
-                                    OctoCollapsibleSection(visible = showExpandedHeader) {
-                                        Text(
-                                            text = "${visibleThreads.size} / ${threads.size} threads",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
+                                Text(
+                                    text = "Inbox",
+                                    style = if (showExpandedHeader) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f)
+                                )
                                 OctoDropdownSelector(
                                     options = InboxFilter.entries,
                                     selected = filter,
                                     onSelect = { filter = it },
                                     labelProvider = { it.label }
                                 )
+                                IconButton(onClick = { loadNotifications(forceRefresh = true, showRefreshFeedback = true) }) {
+                                    Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
+                                }
                             }
 
                             OctoCollapsibleSection(visible = showExpandedHeader) {
                                 Column {
-                                    Spacer(Modifier.height(8.dp))
+                                    Spacer(Modifier.height(OctoTopHeaderDefaults.TabBarTopSpacing))
                                     PrimaryScrollableTabRow(
                                         selectedTabIndex = ReasonFilter.entries.indexOf(reasonFilter).coerceAtLeast(0),
                                         containerColor = Color.Transparent,
@@ -388,8 +389,22 @@ fun NotificationsScreen(
                                                 Text(
                                                     text = "Filter by repo or title...",
                                                     style = MaterialTheme.typography.bodyLarge,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
                                                 )
+                                                Surface(
+                                                    shape = MaterialTheme.shapes.small,
+                                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                                ) {
+                                                    Text(
+                                                        text = "${visibleThreads.size} / ${threads.size}",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     } else {
@@ -398,6 +413,13 @@ fun NotificationsScreen(
                                             onValueChange = { searchQuery = it },
                                             placeholder = { Text("Filter by repo or title...") },
                                             leadingIcon = { Icon(Lucide.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                            suffix = {
+                                                Text(
+                                                    text = "${visibleThreads.size}/${threads.size}",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            },
                                             trailingIcon = {
                                                 IconButton(
                                                     onClick = {
