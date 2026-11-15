@@ -50,10 +50,13 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.Copy
 import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Globe
@@ -125,6 +128,13 @@ fun GistsScreen(
     var mutationError by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+
+    fun copyGistLink(gist: GistSummary) {
+        val shareUrl = resolveGistUrl(gist) ?: return
+        clipboard.setText(AnnotatedString(shareUrl))
+        onMessage("Copied gist link")
+    }
 
     BackHandler(enabled = true) {
         if (selectedDetail != null) selectedDetail = null else onBack()
@@ -200,6 +210,7 @@ fun GistsScreen(
                 mutationError = null
                 showEditorDialog = true
             },
+            onCopyLink = { copyGistLink(opened.summary) },
             onDelete = {
                 mutationError = null
                 showDeleteConfirm = true
@@ -344,7 +355,8 @@ fun GistsScreen(
                             items(items = list, key = { it.id }) { summary ->
                                 GistSummaryCard(
                                     gist = summary,
-                                    onClick = { openGist(summary) }
+                                    onClick = { openGist(summary) },
+                                    onCopyLink = { copyGistLink(summary) }
                                 )
                             }
                         }
@@ -453,10 +465,24 @@ fun GistsScreen(
     }
 }
 
+internal fun resolveGistUrl(gist: GistSummary): String? {
+    val htmlUrl = gist.htmlUrl.trim()
+    if (htmlUrl.isNotEmpty()) return htmlUrl
+    val id = gist.id.trim()
+    if (id.isEmpty()) return null
+    val owner = gist.ownerLogin.trim()
+    return if (owner.isNotEmpty()) {
+        "https://gist.github.com/$owner/$id"
+    } else {
+        "https://gist.github.com/$id"
+    }
+}
+
 @Composable
 private fun GistSummaryCard(
     gist: GistSummary,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onCopyLink: () -> Unit
 ) {
     ElevatedCard(
         shape = MaterialTheme.shapes.large,
@@ -516,6 +542,20 @@ private fun GistSummaryCard(
                         Text("${gist.commentsCount}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                if (resolveGistUrl(gist) != null) {
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = onCopyLink,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            Lucide.Copy,
+                            contentDescription = "Copy gist link",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -528,6 +568,7 @@ private fun GistDetailView(
     onBack: () -> Unit,
     onToggleStar: () -> Unit,
     onEdit: () -> Unit,
+    onCopyLink: () -> Unit,
     onDelete: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -564,8 +605,12 @@ private fun GistDetailView(
                             )
                         }
                     }
-                    if (detail.summary.htmlUrl.isNotBlank()) {
-                        IconButton(onClick = { openUrlInBrowser(detail.summary.htmlUrl) }) {
+                    val gistUrl = resolveGistUrl(detail.summary)
+                    if (gistUrl != null) {
+                        IconButton(onClick = onCopyLink) {
+                            Icon(Lucide.Copy, contentDescription = "Copy gist link", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = { openUrlInBrowser(gistUrl) }) {
                             Icon(Lucide.ExternalLink, contentDescription = "Open in browser", modifier = Modifier.size(18.dp))
                         }
                     }
