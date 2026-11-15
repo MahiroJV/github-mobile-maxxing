@@ -71,14 +71,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private enum class AppDestination(
+    val shell: ShellDestination,
     val label: String,
     val icon: ImageVector
 ) {
-    HOME("Home", Lucide.House),
-    INBOX("Inbox", Lucide.Inbox),
-    ISSUES_PRS("Issues", Lucide.GitPullRequest),
-    REPOS("Repos", Lucide.FolderGit2),
-    SETTINGS("Settings", Lucide.Settings)
+    HOME(ShellDestination.HOME, "Home", Lucide.House),
+    INBOX(ShellDestination.INBOX, "Inbox", Lucide.Inbox),
+    ISSUES_PRS(ShellDestination.ISSUES_PRS, "Issues", Lucide.GitPullRequest),
+    REPOS(ShellDestination.REPOS, "Repos", Lucide.FolderGit2),
+    SETTINGS(ShellDestination.SETTINGS, "Settings", Lucide.Settings)
 }
 
 @Composable
@@ -222,45 +223,26 @@ private fun MainAuthenticatedShell(
     deepLinkTarget: IssuePullTarget?,
     onConsumeDeepLink: () -> Unit
 ) {
-    var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
-    var profileBackStack by remember { mutableStateOf<List<String>>(emptyList()) }
-    var overlayRepo by remember { mutableStateOf<RepoSummary?>(null) }
-    var overlayIssue by remember { mutableStateOf<IssuePullTarget?>(null) }
-    var overlayGistsUser by remember { mutableStateOf<String?>(null) }
+    var navState by remember { mutableStateOf(ShellNavState()) }
     val unreadCount by container.unreadNotificationCount.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     val openUserProfile: (String) -> Unit = { targetLogin ->
-        if (targetLogin.isNotBlank()) {
-            overlayGistsUser = null
-            overlayRepo = null
-            overlayIssue = null
-            profileBackStack = profileBackStack + targetLogin
-        }
+        navState = navState.openUserProfile(targetLogin)
     }
 
     LaunchedEffect(deepLinkTarget) {
         if (deepLinkTarget != null) {
-            profileBackStack = emptyList()
-            overlayGistsUser = null
-            overlayRepo = null
-            overlayIssue = null
-            currentDestination = AppDestination.INBOX
+            navState = navState.selectBottomDestination(ShellDestination.INBOX)
         }
     }
 
     // Android System Back pops profile/overlay stack or returns to Home tab before exiting app
     BackHandler(
-        enabled = overlayGistsUser != null || overlayIssue != null || overlayRepo != null || profileBackStack.isNotEmpty() || currentDestination != AppDestination.HOME
+        enabled = navState.hasOverlay || navState.currentDestination != ShellDestination.HOME
     ) {
-        when {
-            overlayGistsUser != null -> overlayGistsUser = null
-            overlayIssue != null -> overlayIssue = null
-            overlayRepo != null -> overlayRepo = null
-            profileBackStack.isNotEmpty() -> profileBackStack = profileBackStack.dropLast(1)
-            else -> currentDestination = AppDestination.HOME
-        }
+        navState = navState.popBackOrReturnHome()
     }
 
     val showMessage: (String) -> Unit = { msg ->
@@ -297,8 +279,8 @@ private fun MainAuthenticatedShell(
                             overflow = TextOverflow.Ellipsis
                         )
                     },
-                    selected = currentDestination == dest,
-                    onClick = { currentDestination = dest }
+                    selected = !navState.hasOverlay && navState.currentDestination == dest.shell,
+                    onClick = { navState = navState.selectBottomDestination(dest.shell) }
                 )
             }
         }
@@ -310,67 +292,67 @@ private fun MainAuthenticatedShell(
         ) { innerPadding ->
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                 when {
-                    overlayGistsUser != null -> GistsScreen(
+                    navState.overlayGistsUser != null -> GistsScreen(
                         container = container,
-                        userLogin = overlayGistsUser?.takeIf { it.isNotBlank() },
-                        onBack = { overlayGistsUser = null },
+                        userLogin = navState.overlayGistsUser?.takeIf { it.isNotBlank() },
+                        onBack = { navState = navState.copy(overlayGistsUser = null) },
                         onMessage = showMessage
                     )
-                    overlayIssue != null -> IssuePullDetailPane(
-                        target = overlayIssue!!,
+                    navState.overlayIssue != null -> IssuePullDetailPane(
+                        target = navState.overlayIssue!!,
                         container = container,
                         showBackButton = true,
-                        onBack = { overlayIssue = null },
+                        onBack = { navState = navState.copy(overlayIssue = null) },
                         onMessage = showMessage
                     )
-                    overlayRepo != null -> RepoDetailScreen(
-                        repo = overlayRepo!!,
+                    navState.overlayRepo != null -> RepoDetailScreen(
+                        repo = navState.overlayRepo!!,
                         container = container,
-                        onBack = { overlayRepo = null },
-                        onOpenIssueOrPull = { overlayIssue = it },
+                        onBack = { navState = navState.copy(overlayRepo = null) },
+                        onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
                         onOpenUser = openUserProfile,
                         onMessage = showMessage
                     )
-                    profileBackStack.isNotEmpty() -> UserProfileScreen(
-                        login = profileBackStack.last(),
+                    navState.profileBackStack.isNotEmpty() -> UserProfileScreen(
+                        login = navState.profileBackStack.last(),
                         container = container,
-                        onBack = { profileBackStack = profileBackStack.dropLast(1) },
-                        onOpenRepo = { overlayRepo = it },
-                        onOpenIssueOrPull = { overlayIssue = it },
-                        onOpenUser = { nextLogin -> profileBackStack = profileBackStack + nextLogin },
-                        onOpenGists = { targetUser -> overlayGistsUser = targetUser },
+                        onBack = { navState = navState.copy(profileBackStack = navState.profileBackStack.dropLast(1)) },
+                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
+                        onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
+                        onOpenUser = { nextLogin -> navState = navState.openUserProfile(nextLogin) },
+                        onOpenGists = { targetUser -> navState = navState.copy(overlayGistsUser = targetUser) },
                         onMessage = showMessage
                     )
-                    else -> when (currentDestination) {
-                        AppDestination.HOME -> HomeScreen(
+                    else -> when (navState.currentDestination) {
+                        ShellDestination.HOME -> HomeScreen(
                             container = container,
                             unreadCount = unreadCount,
-                            onNavigateInbox = { currentDestination = AppDestination.INBOX },
-                            onNavigateIssuesPrs = { currentDestination = AppDestination.ISSUES_PRS },
-                            onNavigateRepos = { currentDestination = AppDestination.REPOS },
-                            onOpenGists = { overlayGistsUser = "" },
+                            onNavigateInbox = { navState = navState.selectBottomDestination(ShellDestination.INBOX) },
+                            onNavigateIssuesPrs = { navState = navState.selectBottomDestination(ShellDestination.ISSUES_PRS) },
+                            onNavigateRepos = { navState = navState.selectBottomDestination(ShellDestination.REPOS) },
+                            onOpenGists = { navState = navState.copy(overlayGistsUser = "") },
                             onOpenUser = openUserProfile,
                             onMessage = showMessage
                         )
-                        AppDestination.INBOX -> NotificationsScreen(
+                        ShellDestination.INBOX -> NotificationsScreen(
                             container = container,
                             deepLinkTarget = deepLinkTarget,
                             onConsumeDeepLink = onConsumeDeepLink,
                             onMessage = showMessage
                         )
-                        AppDestination.ISSUES_PRS -> IssuesPullsScreen(
+                        ShellDestination.ISSUES_PRS -> IssuesPullsScreen(
                             container = container,
                             onMessage = showMessage
                         )
-                        AppDestination.REPOS -> ReposScreen(
+                        ShellDestination.REPOS -> ReposScreen(
                             container = container,
                             onOpenUser = openUserProfile,
                             onMessage = showMessage
                         )
-                        AppDestination.SETTINGS -> SettingsScreen(
+                        ShellDestination.SETTINGS -> SettingsScreen(
                             container = container,
                             onOpenUser = openUserProfile,
-                            onSignedOut = { currentDestination = AppDestination.HOME },
+                            onSignedOut = { navState = navState.selectBottomDestination(ShellDestination.HOME) },
                             onMessage = showMessage
                         )
                     }
