@@ -154,7 +154,12 @@ data class IssueOrPullDetail(
     val reviewDecision: String? = null,
     val checkRollup: CheckRollupSummary? = null,
     val htmlUrl: String = "",
-    val timeline: List<TimelineEvent> = emptyList()
+    val timeline: List<TimelineEvent> = emptyList(),
+    val viewerPermission: String? = null,
+    val viewerCanUpdate: Boolean = false,
+    val viewerCanCloseOrReopen: Boolean = false,
+    val viewerCanMerge: Boolean = false,
+    val viewerCanEditMetadata: Boolean = false
 )
 
 @Serializable

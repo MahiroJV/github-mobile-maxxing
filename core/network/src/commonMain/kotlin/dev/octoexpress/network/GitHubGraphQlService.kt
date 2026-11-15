@@ -214,6 +214,7 @@ class GitHubGraphQlService(
         val query = """
             query {
               repository(owner: "$owner", name: "$repo") {
+                viewerPermission
                 issueOrPullRequest(number: $number) {
                   __typename
                   ... on Issue {
@@ -223,6 +224,7 @@ class GitHubGraphQlService(
                     body
                     state
                     url
+                    viewerCanUpdate
                     createdAt
                     updatedAt
                     author { login avatarUrl url }
@@ -260,6 +262,7 @@ class GitHubGraphQlService(
                     state
                     isDraft
                     url
+                    viewerCanUpdate
                     createdAt
                     updatedAt
                     headRefName
@@ -331,8 +334,14 @@ class GitHubGraphQlService(
         """.trimIndent()
 
         val data = execute(query)
-        val item = data.obj("repository")?.obj("issueOrPullRequest")
+        val repoNode = data.obj("repository")
+        val viewerPermission = repoNode?.str("viewerPermission")?.uppercase()
+        val item = repoNode?.obj("issueOrPullRequest")
             ?: throw GitHubApiException(404, "Issue or PR #$number not found in $owner/$repo")
+
+        val viewerCanUpdate = item.bool("viewerCanUpdate") ?: false
+        val canTriage = viewerPermission in TRIAGE_OR_HIGHER_PERMS
+        val canWrite = viewerPermission in WRITE_OR_HIGHER_PERMS
 
         val typeName = item.str("__typename") ?: "Issue"
         val isPr = typeName == "PullRequest"
@@ -437,7 +446,12 @@ class GitHubGraphQlService(
             reviewDecision = item.str("reviewDecision"),
             checkRollup = statusState?.let { CheckRollupSummary(state = it) },
             htmlUrl = item.str("url") ?: "",
-            timeline = timeline
+            timeline = timeline,
+            viewerPermission = viewerPermission,
+            viewerCanUpdate = viewerCanUpdate,
+            viewerCanCloseOrReopen = viewerCanUpdate || canTriage,
+            viewerCanMerge = canWrite,
+            viewerCanEditMetadata = canTriage
         )
     }
 
@@ -698,6 +712,9 @@ class GitHubGraphQlService(
         this[key]?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.booleanOrNull }
 
     companion object {
+        private val TRIAGE_OR_HIGHER_PERMS = setOf("ADMIN", "MAINTAIN", "WRITE", "TRIAGE")
+        private val WRITE_OR_HIGHER_PERMS = setOf("ADMIN", "MAINTAIN", "WRITE")
+
         private const val REPO_FIELDS = """
             id
             name

@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -387,6 +388,9 @@ fun IssuePullDetailPane(
                     }
                 }
 
+                var pendingMergeConfirmMethod by remember(target) { mutableStateOf<MergeMethod?>(null) }
+                var pendingStateConfirmOpen by remember(target) { mutableStateOf<Boolean?>(null) }
+
                 // MD3E Floating Action Toolbar at bottom
                 OctoFloatingToolbar(
                     expanded = true,
@@ -402,9 +406,8 @@ fun IssuePullDetailPane(
                         Icon(Lucide.MessageSquarePlus, contentDescription = "Comment")
                     }
 
-                    Spacer(Modifier.width(6.dp))
-
                     if (isPr && item.state == IssueOrPullState.OPEN) {
+                        Spacer(Modifier.width(6.dp))
                         FilledTonalButton(
                             onClick = { showReviewDialog = true },
                             enabled = !actionBusy
@@ -414,61 +417,153 @@ fun IssuePullDetailPane(
                             Text("Review")
                         }
 
-                        Spacer(Modifier.width(6.dp))
-
-                        val mergeOptions = remember {
-                            MergeMethod.entries.map {
-                                SplitActionOption(it, it.displayLabel, Lucide.GitMerge)
-                            }
-                        }
-                        OctoSplitActionButton(
-                            selectedOption = mergeOptions.first { it.value == selectedMergeMethod },
-                            options = mergeOptions,
-                            enabled = !actionBusy && !item.isDraft,
-                            onSelectOption = { selectedMergeMethod = it },
-                            onPrimaryClick = { method ->
-                                scope.launch {
-                                    actionBusy = true
-                                    container.repository.mergePullRequest(
-                                        target.owner, target.repo, target.number, method
-                                    ).onSuccess {
-                                        onMessage("Merged #${target.number} (${method.apiValue})")
-                                        loadDetail(forceRefresh = true)
-                                    }.onFailure {
-                                        onMessage(it.message ?: "Merge failed")
-                                    }
-                                    actionBusy = false
-                                }
-                            }
-                        )
-                    } else if (item.state != IssueOrPullState.MERGED) {
-                        val willOpen = item.state == IssueOrPullState.CLOSED
-                        FilledTonalButton(
-                            onClick = {
-                                scope.launch {
-                                    actionBusy = true
-                                    container.repository.setIssueOrPullState(
-                                        target.owner, target.repo, target.number, open = willOpen
-                                    ).onSuccess {
-                                        onMessage(if (willOpen) "Reopened #${target.number}" else "Closed #${target.number}")
-                                        loadDetail(forceRefresh = true)
-                                    }.onFailure {
-                                        onMessage(it.message ?: "Failed to update state")
-                                    }
-                                    actionBusy = false
-                                }
-                            },
-                            enabled = !actionBusy
-                        ) {
-                            Icon(
-                                if (willOpen) Lucide.CircleDot else Lucide.X,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
+                        if (item.viewerCanMerge) {
                             Spacer(Modifier.width(6.dp))
-                            Text(if (willOpen) "Reopen" else "Close")
+                            val mergeOptions = remember {
+                                MergeMethod.entries.map {
+                                    SplitActionOption(it, it.displayLabel, Lucide.GitMerge)
+                                }
+                            }
+                            OctoSplitActionButton(
+                                selectedOption = mergeOptions.first { it.value == selectedMergeMethod },
+                                options = mergeOptions,
+                                enabled = !actionBusy && !item.isDraft,
+                                onSelectOption = { selectedMergeMethod = it },
+                                onPrimaryClick = { method ->
+                                    pendingMergeConfirmMethod = method
+                                }
+                            )
                         }
                     }
+
+                    if (item.state != IssueOrPullState.MERGED && item.viewerCanCloseOrReopen) {
+                        val willOpen = item.state == IssueOrPullState.CLOSED
+                        val mergeVisible = isPr && item.state == IssueOrPullState.OPEN && item.viewerCanMerge
+                        Spacer(Modifier.width(6.dp))
+                        if (mergeVisible) {
+                            FilledTonalIconButton(
+                                onClick = { pendingStateConfirmOpen = willOpen },
+                                enabled = !actionBusy
+                            ) {
+                                Icon(
+                                    if (willOpen) Lucide.CircleDot else Lucide.X,
+                                    contentDescription = if (willOpen) "Reopen" else "Close"
+                                )
+                            }
+                        } else {
+                            FilledTonalButton(
+                                onClick = { pendingStateConfirmOpen = willOpen },
+                                enabled = !actionBusy
+                            ) {
+                                Icon(
+                                    if (willOpen) Lucide.CircleDot else Lucide.X,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (willOpen) "Reopen" else "Close")
+                            }
+                        }
+                    }
+                }
+
+                pendingMergeConfirmMethod?.let { method ->
+                    AlertDialog(
+                        onDismissRequest = { pendingMergeConfirmMethod = null },
+                        icon = { Icon(Lucide.GitMerge, contentDescription = null) },
+                        title = { Text("Merge #${target.number}?") },
+                        text = {
+                            Text(
+                                "Are you sure you want to merge into ${item.baseRefName ?: "base"} " +
+                                    "using ${method.displayLabel}?\n\n${item.title}"
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                enabled = !actionBusy,
+                                onClick = {
+                                    pendingMergeConfirmMethod = null
+                                    scope.launch {
+                                        actionBusy = true
+                                        container.repository.mergePullRequest(
+                                            target.owner, target.repo, target.number, method
+                                        ).onSuccess {
+                                            onMessage("Merged #${target.number} (${method.apiValue})")
+                                            loadDetail(forceRefresh = true)
+                                        }.onFailure {
+                                            onMessage(it.message ?: "Merge failed")
+                                        }
+                                        actionBusy = false
+                                    }
+                                }
+                            ) {
+                                Text("Merge")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingMergeConfirmMethod = null }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
+
+                pendingStateConfirmOpen?.let { willOpen ->
+                    val kindLabel = if (isPr) "pull request" else "issue"
+                    AlertDialog(
+                        onDismissRequest = { pendingStateConfirmOpen = null },
+                        icon = {
+                            Icon(
+                                if (willOpen) Lucide.CircleDot else Lucide.X,
+                                contentDescription = null
+                            )
+                        },
+                        title = { Text(if (willOpen) "Reopen #${target.number}?" else "Close #${target.number}?") },
+                        text = {
+                            Text(
+                                "Are you sure you want to ${if (willOpen) "reopen" else "close"} " +
+                                    "this $kindLabel?\n\n${item.title}"
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                enabled = !actionBusy,
+                                colors = if (!willOpen) {
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                        contentColor = MaterialTheme.colorScheme.onError
+                                    )
+                                } else {
+                                    ButtonDefaults.buttonColors()
+                                },
+                                onClick = {
+                                    pendingStateConfirmOpen = null
+                                    scope.launch {
+                                        actionBusy = true
+                                        container.repository.setIssueOrPullState(
+                                            target.owner, target.repo, target.number, open = willOpen
+                                        ).onSuccess {
+                                            onMessage(
+                                                if (willOpen) "Reopened #${target.number}"
+                                                else "Closed #${target.number}"
+                                            )
+                                            loadDetail(forceRefresh = true)
+                                        }.onFailure {
+                                            onMessage(it.message ?: "Failed to update state")
+                                        }
+                                        actionBusy = false
+                                    }
+                                }
+                            ) {
+                                Text(if (willOpen) "Reopen" else "Close")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingStateConfirmOpen = null }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -972,25 +1067,27 @@ private fun DetailHeaderCard(
                 }
             }
 
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                AssistChip(
-                    onClick = onEditLabels,
-                    leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                    label = { Text("Labels (${item.labels.size})") }
-                )
-                AssistChip(
-                    onClick = onEditAssignees,
-                    leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                    label = { Text("Assignees (${item.assignees.size})") }
-                )
-                AssistChip(
-                    onClick = onEditMilestone,
-                    leadingIcon = { Icon(Lucide.Flag, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                    label = { Text(item.milestone?.title ?: "Milestone") }
-                )
+            if (item.viewerCanEditMetadata) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AssistChip(
+                        onClick = onEditLabels,
+                        leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                        label = { Text("Labels (${item.labels.size})") }
+                    )
+                    AssistChip(
+                        onClick = onEditAssignees,
+                        leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                        label = { Text("Assignees (${item.assignees.size})") }
+                    )
+                    AssistChip(
+                        onClick = onEditMilestone,
+                        leadingIcon = { Icon(Lucide.Flag, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                        label = { Text(item.milestone?.title ?: "Milestone") }
+                    )
+                }
             }
         }
     }
