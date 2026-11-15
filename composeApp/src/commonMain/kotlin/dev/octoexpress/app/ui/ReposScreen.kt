@@ -1,5 +1,10 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,6 +86,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -1647,6 +1653,9 @@ fun RepoDetailScreen(
         }
     }
 
+    val headerCollapseTracker = remember(repo.fullName) { RepoHeaderCollapseTracker() }
+    val headerNestedScroll = remember(headerCollapseTracker) { headerCollapseTracker.toNestedScrollConnection() }
+
     Column(modifier = Modifier.fillMaxSize()) {
         // Header
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
@@ -1696,240 +1705,248 @@ fun RepoDetailScreen(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                // 1) MD3E Connected Social Action Group (Star · Watch · Fork · Network)
-                val isLightTheme = MaterialTheme.colorScheme.surface.luminance() > 0.5f
-                val starCount = (detail?.summary?.stargazersCount ?: repo.stargazersCount).let { base ->
-                    if (isStarred == (detail?.summary?.viewerHasStarred ?: repo.viewerHasStarred)) base
-                    else if (isStarred) base + 1 else (base - 1).coerceAtLeast(0)
-                }
-                val forksNum = detail?.summary?.forksCount ?: repo.forksCount
-                val starCheckedBg = if (isLightTheme) Color(0xFFFEF3C7) else Color(0xFF453208)
-                val starCheckedFg = if (isLightTheme) Color(0xFF92400E) else Color(0xFFFCD34D)
-                val starIconTint = if (isLightTheme) Color(0xFFD97706) else Color(0xFFFBBF24)
-                val actionPad = PaddingValues(horizontal = 11.dp, vertical = 6.dp)
-
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)
+                AnimatedVisibility(
+                    visible = !headerCollapseTracker.isCollapsed,
+                    enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                 ) {
-                    ToggleButton(
-                        checked = isStarred,
-                        onCheckedChange = {
-                            val next = !isStarred
-                            isStarred = next
-                            scope.launch {
-                                container.repository.setStarred(repo.owner, repo.name, next)
-                                    .onSuccess { onMessage(if (next) "Starred ${repo.fullName}" else "Unstarred ${repo.fullName}") }
-                                    .onFailure { isStarred = !next }
-                            }
-                        },
-                        shapes = ButtonGroupDefaults.connectedLeadingButtonShapes(),
-                        contentPadding = actionPad,
-                        colors = FilledTonalToggleButtonDefaults.colors(
-                            checkedContainerColor = starCheckedBg,
-                            checkedContentColor = starCheckedFg
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isStarred) OctoFilledIcons.Star else Lucide.Star,
-                            contentDescription = if (isStarred) "Starred" else "Star",
-                            tint = if (isStarred) starIconTint else MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = if (isStarred) "Starred ${formatCompactCount(starCount)}" else "Star ${formatCompactCount(starCount)}",
-                            fontWeight = if (isStarred) FontWeight.SemiBold else FontWeight.Medium,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                    Column {
+                        Spacer(Modifier.height(8.dp))
+                        // 1) MD3E Connected Social Action Group (Star · Watch · Fork · Network)
+                        val isLightTheme = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+                        val starCount = (detail?.summary?.stargazersCount ?: repo.stargazersCount).let { base ->
+                            if (isStarred == (detail?.summary?.viewerHasStarred ?: repo.viewerHasStarred)) base
+                            else if (isStarred) base + 1 else (base - 1).coerceAtLeast(0)
+                        }
+                        val forksNum = detail?.summary?.forksCount ?: repo.forksCount
+                        val starCheckedBg = if (isLightTheme) Color(0xFFFEF3C7) else Color(0xFF453208)
+                        val starCheckedFg = if (isLightTheme) Color(0xFF92400E) else Color(0xFFFCD34D)
+                        val starIconTint = if (isLightTheme) Color(0xFFD97706) else Color(0xFFFBBF24)
+                        val actionPad = PaddingValues(horizontal = 11.dp, vertical = 6.dp)
 
-                    ToggleButton(
-                        checked = isWatching,
-                        onCheckedChange = {
-                            val next = !isWatching
-                            isWatching = next
-                            scope.launch {
-                                container.repository.setRepoSubscription(repo.owner, repo.name, next)
-                                    .onSuccess { onMessage(if (next) "Watching ${repo.fullName}" else "Unwatched ${repo.fullName}") }
-                                    .onFailure {
-                                        isWatching = !next
-                                        onMessage(it.message ?: "Watch update failed")
-                                    }
-                            }
-                        },
-                        shapes = ButtonGroupDefaults.connectedMiddleButtonShapes(),
-                        contentPadding = actionPad,
-                        colors = FilledTonalToggleButtonDefaults.colors(
-                            checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isWatching) Lucide.Eye else Lucide.EyeOff,
-                            contentDescription = if (isWatching) "Watching" else "Watch",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = if (isWatching) "Watching" else "Watch",
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-
-                    ToggleButton(
-                        checked = false,
-                        enabled = !forkBusy,
-                        onCheckedChange = {
-                            forkBusy = true
-                            scope.launch {
-                                container.repository.forkRepository(repo.owner, repo.name)
-                                    .onSuccess { forked ->
-                                        forkBusy = false
-                                        onMessage("Forked to ${forked.fullName}")
-                                        onOpenRepo(forked)
-                                    }
-                                    .onFailure {
-                                        forkBusy = false
-                                        onMessage(it.message ?: "Fork failed")
-                                    }
-                            }
-                        },
-                        shapes = ButtonGroupDefaults.connectedMiddleButtonShapes(),
-                        contentPadding = actionPad,
-                        colors = FilledTonalToggleButtonDefaults.colors()
-                    ) {
-                        Icon(Lucide.GitFork, contentDescription = "Fork", modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = if (forkBusy) "Forking..." else "Fork ${formatCompactCount(forksNum)}",
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-
-                    ToggleButton(
-                        checked = false,
-                        onCheckedChange = { openPeopleTab(RepoPeopleTab.STARGAZERS) },
-                        shapes = ButtonGroupDefaults.connectedTrailingButtonShapes(),
-                        contentPadding = actionPad,
-                        colors = FilledTonalToggleButtonDefaults.colors()
-                    ) {
-                        Icon(Lucide.Users, contentDescription = "Network", modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Network", maxLines = 1, softWrap = false)
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                // 2) Distinct Git Reference Field (10.dp rounded rectangle) + Compare button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showBranchMenu = true }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ToggleButton(
+                                checked = isStarred,
+                                onCheckedChange = {
+                                    val next = !isStarred
+                                    isStarred = next
+                                    scope.launch {
+                                        container.repository.setStarred(repo.owner, repo.name, next)
+                                            .onSuccess { onMessage(if (next) "Starred ${repo.fullName}" else "Unstarred ${repo.fullName}") }
+                                            .onFailure { isStarred = !next }
+                                    }
+                                },
+                                shapes = ButtonGroupDefaults.connectedLeadingButtonShapes(),
+                                contentPadding = actionPad,
+                                colors = FilledTonalToggleButtonDefaults.colors(
+                                    checkedContainerColor = starCheckedBg,
+                                    checkedContentColor = starCheckedFg
+                                )
                             ) {
                                 Icon(
-                                    Lucide.GitBranch,
-                                    contentDescription = "Branch or tag",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(15.dp)
+                                    imageVector = if (isStarred) OctoFilledIcons.Star else Lucide.Star,
+                                    contentDescription = if (isStarred) "Starred" else "Star",
+                                    tint = if (isStarred) starIconTint else MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(16.dp)
                                 )
+                                Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = currentRef,
-                                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                                    text = if (isStarred) "Starred ${formatCompactCount(starCount)}" else "Star ${formatCompactCount(starCount)}",
+                                    fontWeight = if (isStarred) FontWeight.SemiBold else FontWeight.Medium,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
+                                    softWrap = false
                                 )
+                            }
+
+                            ToggleButton(
+                                checked = isWatching,
+                                onCheckedChange = {
+                                    val next = !isWatching
+                                    isWatching = next
+                                    scope.launch {
+                                        container.repository.setRepoSubscription(repo.owner, repo.name, next)
+                                            .onSuccess { onMessage(if (next) "Watching ${repo.fullName}" else "Unwatched ${repo.fullName}") }
+                                            .onFailure {
+                                                isWatching = !next
+                                                onMessage(it.message ?: "Watch update failed")
+                                            }
+                                    }
+                                },
+                                shapes = ButtonGroupDefaults.connectedMiddleButtonShapes(),
+                                contentPadding = actionPad,
+                                colors = FilledTonalToggleButtonDefaults.colors(
+                                    checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            ) {
                                 Icon(
-                                    Lucide.ChevronDown,
-                                    contentDescription = "Switch branch or tag",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(15.dp)
+                                    imageVector = if (isWatching) Lucide.Eye else Lucide.EyeOff,
+                                    contentDescription = if (isWatching) "Watching" else "Watch",
+                                    modifier = Modifier.size(16.dp)
                                 )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = if (isWatching) "Watching" else "Watch",
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            ToggleButton(
+                                checked = false,
+                                enabled = !forkBusy,
+                                onCheckedChange = {
+                                    forkBusy = true
+                                    scope.launch {
+                                        container.repository.forkRepository(repo.owner, repo.name)
+                                            .onSuccess { forked ->
+                                                forkBusy = false
+                                                onMessage("Forked to ${forked.fullName}")
+                                                onOpenRepo(forked)
+                                            }
+                                            .onFailure {
+                                                forkBusy = false
+                                                onMessage(it.message ?: "Fork failed")
+                                            }
+                                    }
+                                },
+                                shapes = ButtonGroupDefaults.connectedMiddleButtonShapes(),
+                                contentPadding = actionPad,
+                                colors = FilledTonalToggleButtonDefaults.colors()
+                            ) {
+                                Icon(Lucide.GitFork, contentDescription = "Fork", modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = if (forkBusy) "Forking..." else "Fork ${formatCompactCount(forksNum)}",
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            ToggleButton(
+                                checked = false,
+                                onCheckedChange = { openPeopleTab(RepoPeopleTab.STARGAZERS) },
+                                shapes = ButtonGroupDefaults.connectedTrailingButtonShapes(),
+                                contentPadding = actionPad,
+                                colors = FilledTonalToggleButtonDefaults.colors()
+                            ) {
+                                Icon(Lucide.Users, contentDescription = "Network", modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Network", maxLines = 1, softWrap = false)
                             }
                         }
-                        DropdownMenu(expanded = showBranchMenu, onDismissRequest = { showBranchMenu = false }) {
-                            val branches = detail?.branches.orEmpty()
-                            val selectRef: (String) -> Unit = { selected ->
-                                showBranchMenu = false
-                                currentRef = selected
-                                openedCommitSha = null
-                                loadDirectory("", selected)
-                                if (activeTab == RepoDetailTab.CODE && showCommitsView && !showCompareView) {
-                                    loadCommits(selected, forceRefresh = false)
-                                }
-                                scope.launch {
-                                    container.repository.getReadme(repo.owner, repo.name, selected)
-                                        .onSuccess { readme = it }
-                                }
-                            }
-                            if (branches.isEmpty() && repoTags.isEmpty()) {
-                                DropdownMenuItem(
-                                    text = { Text(currentRef) },
-                                    onClick = { showBranchMenu = false }
-                                )
-                            } else {
-                                branches.forEach { b ->
-                                    DropdownMenuItem(
-                                        leadingIcon = { Icon(Lucide.GitBranch, contentDescription = null, modifier = Modifier.size(15.dp)) },
-                                        text = { Text(b.name) },
-                                        onClick = { selectRef(b.name) }
-                                    )
-                                }
-                                if (repoTags.isNotEmpty()) {
-                                    HorizontalDivider()
-                                    repoTags.take(20).forEach { tag ->
-                                        DropdownMenuItem(
-                                            leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(15.dp)) },
-                                            text = { Text(tag.name) },
-                                            onClick = { selectRef(tag.name) }
+
+                        Spacer(Modifier.height(8.dp))
+                        // 2) Distinct Git Reference Field (10.dp rounded rectangle) + Compare button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showBranchMenu = true }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            Lucide.GitBranch,
+                                            contentDescription = "Branch or tag",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = currentRef,
+                                            style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(
+                                            Lucide.ChevronDown,
+                                            contentDescription = "Switch branch or tag",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(15.dp)
                                         )
                                     }
                                 }
+                                DropdownMenu(expanded = showBranchMenu, onDismissRequest = { showBranchMenu = false }) {
+                                    val branches = detail?.branches.orEmpty()
+                                    val selectRef: (String) -> Unit = { selected ->
+                                        showBranchMenu = false
+                                        currentRef = selected
+                                        openedCommitSha = null
+                                        loadDirectory("", selected)
+                                        if (activeTab == RepoDetailTab.CODE && showCommitsView && !showCompareView) {
+                                            loadCommits(selected, forceRefresh = false)
+                                        }
+                                        scope.launch {
+                                            container.repository.getReadme(repo.owner, repo.name, selected)
+                                                .onSuccess { readme = it }
+                                        }
+                                    }
+                                    if (branches.isEmpty() && repoTags.isEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text(currentRef) },
+                                            onClick = { showBranchMenu = false }
+                                        )
+                                    } else {
+                                        branches.forEach { b ->
+                                            DropdownMenuItem(
+                                                leadingIcon = { Icon(Lucide.GitBranch, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                                                text = { Text(b.name) },
+                                                onClick = { selectRef(b.name) }
+                                            )
+                                        }
+                                        if (repoTags.isNotEmpty()) {
+                                            HorizontalDivider()
+                                            repoTags.take(20).forEach { tag ->
+                                                DropdownMenuItem(
+                                                    leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                                                    text = { Text(tag.name) },
+                                                    onClick = { selectRef(tag.name) }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            FilledTonalButton(
+                                shape = RoundedCornerShape(10.dp),
+                                onClick = {
+                                    openedCommitSha = null
+                                    showCommitsView = true
+                                    showCompareView = true
+                                    activeTab = RepoDetailTab.CODE
+                                    val branches = detail?.branches.orEmpty()
+                                    val base = detail?.summary?.defaultBranch ?: repo.defaultBranch
+                                    val head = if (currentRef != base) currentRef else {
+                                        branches.firstOrNull { it.name != base }?.name ?: currentRef
+                                    }
+                                    compareBase = base
+                                    compareHead = head
+                                    runCompare(base, head)
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+                            ) {
+                                Icon(Lucide.ArrowLeftRight, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text("Compare", maxLines = 1, softWrap = false)
                             }
                         }
-                    }
-
-                    FilledTonalButton(
-                        shape = RoundedCornerShape(10.dp),
-                        onClick = {
-                            openedCommitSha = null
-                            showCommitsView = true
-                            showCompareView = true
-                            activeTab = RepoDetailTab.CODE
-                            val branches = detail?.branches.orEmpty()
-                            val base = detail?.summary?.defaultBranch ?: repo.defaultBranch
-                            val head = if (currentRef != base) currentRef else {
-                                branches.firstOrNull { it.name != base }?.name ?: currentRef
-                            }
-                            compareBase = base
-                            compareHead = head
-                            runCompare(base, head)
-                        },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
-                    ) {
-                        Icon(Lucide.ArrowLeftRight, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("Compare", maxLines = 1, softWrap = false)
                     }
                 }
 
@@ -1955,6 +1972,7 @@ fun RepoDetailScreen(
                             selected = selected,
                             onClick = {
                                 activeTab = tab
+                                headerCollapseTracker.expand()
                                 if (tab != RepoDetailTab.CODE) {
                                     showCommitsView = false
                                     showCompareView = false
@@ -1994,7 +2012,13 @@ fun RepoDetailScreen(
             }
         }
 
-        when (activeTab) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .nestedScroll(headerNestedScroll)
+        ) {
+            when (activeTab) {
             RepoDetailTab.CODE -> {
                 if (showCommitsView || showCompareView || openedCommitSha != null) {
                     val allRefs = remember(detail?.branches, repoTags, currentRef, repo.defaultBranch) {
@@ -2548,6 +2572,7 @@ fun RepoDetailScreen(
                     }
                 )
             }
+        }
         }
     }
 
