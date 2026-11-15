@@ -106,3 +106,31 @@ data class BranchCompareResult(
     val files: List<PullFileChange> = emptyList(),
     val htmlUrl: String = ""
 )
+
+@Serializable
+data class ReleaseAsset(
+    val id: Long,
+    val name: String,
+    val sizeBytes: Long = 0L,
+    val downloadCount: Int = 0,
+    val downloadUrl: String = "",
+    val contentType: String = ""
+)
+
+@Serializable
+data class ReleaseSummary(
+    val id: Long,
+    val tagName: String,
+    val name: String,
+    val body: String = "",
+    val isDraft: Boolean = false,
+    val isPrerelease: Boolean = false,
+    val authorLogin: String = "",
+    val authorAvatarUrl: String = "",
+    val publishedAt: String = "",
+    val createdAt: String = "",
+    val assets: List<ReleaseAsset> = emptyList(),
+    val tarballUrl: String = "",
+    val zipballUrl: String = "",
+    val htmlUrl: String = ""
+)

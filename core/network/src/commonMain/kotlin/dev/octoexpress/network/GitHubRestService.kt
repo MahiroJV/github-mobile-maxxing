@@ -21,6 +21,8 @@ import dev.octoexpress.model.NotificationSubjectType
 import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.PullFileChange
+import dev.octoexpress.model.ReleaseAsset
+import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TagRef
@@ -398,6 +400,59 @@ private data class RestCheckRunDto(
 private data class RestCheckRunsResponse(
     @SerialName("check_runs") val checkRuns: List<RestCheckRunDto> = emptyList()
 )
+
+@Serializable
+private data class RestReleaseAssetDto(
+    val id: Long,
+    val name: String = "",
+    val size: Long = 0L,
+    @SerialName("download_count") val downloadCount: Int = 0,
+    @SerialName("browser_download_url") val browserDownloadUrl: String = "",
+    @SerialName("content_type") val contentType: String = ""
+)
+
+@Serializable
+private data class RestReleaseDto(
+    val id: Long,
+    @SerialName("tag_name") val tagName: String = "",
+    val name: String? = null,
+    val body: String? = null,
+    val draft: Boolean = false,
+    val prerelease: Boolean = false,
+    val author: RestCommitUserDto? = null,
+    @SerialName("published_at") val publishedAt: String? = null,
+    @SerialName("created_at") val createdAt: String = "",
+    val assets: List<RestReleaseAssetDto> = emptyList(),
+    @SerialName("tarball_url") val tarballUrl: String? = null,
+    @SerialName("zipball_url") val zipballUrl: String? = null,
+    @SerialName("html_url") val htmlUrl: String = ""
+) {
+    fun toReleaseSummary(): ReleaseSummary = ReleaseSummary(
+        id = id,
+        tagName = tagName,
+        name = name?.takeIf { it.isNotBlank() } ?: tagName,
+        body = body.orEmpty(),
+        isDraft = draft,
+        isPrerelease = prerelease,
+        authorLogin = author?.login.orEmpty(),
+        authorAvatarUrl = author?.avatarUrl.orEmpty(),
+        publishedAt = publishedAt.orEmpty(),
+        createdAt = createdAt,
+        assets = assets.map {
+            ReleaseAsset(
+                id = it.id,
+                name = it.name,
+                sizeBytes = it.size,
+                downloadCount = it.downloadCount,
+                downloadUrl = it.browserDownloadUrl,
+                contentType = it.contentType
+            )
+        },
+        tarballUrl = tarballUrl.orEmpty(),
+        zipballUrl = zipballUrl.orEmpty(),
+        htmlUrl = htmlUrl
+    )
+}
 
 @Serializable
 private data class RestUserProfileDto(
@@ -830,6 +885,46 @@ class GitHubRestService(
                 detailsUrl = cr.detailsUrl?.ifBlank { cr.htmlUrl } ?: cr.htmlUrl
             )
         }
+    }
+
+    suspend fun fetchReleases(owner: String, repo: String, perPage: Int = 20): List<ReleaseSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/releases") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load releases (${res.status.value})")
+        }
+        return res.body<List<RestReleaseDto>>().map { it.toReleaseSummary() }
+    }
+
+    suspend fun createRelease(
+        owner: String,
+        repo: String,
+        tagName: String,
+        name: String,
+        body: String = "",
+        targetCommitish: String? = null,
+        isDraft: Boolean = false,
+        isPrerelease: Boolean = false,
+        generateReleaseNotes: Boolean = true
+    ): ReleaseSummary {
+        val payload = buildJsonObject {
+            put("tag_name", tagName)
+            if (name.isNotBlank()) put("name", name)
+            if (body.isNotBlank()) put("body", body)
+            targetCommitish?.takeIf { it.isNotBlank() }?.let { put("target_commitish", it) }
+            put("draft", isDraft)
+            put("prerelease", isPrerelease)
+            put("generate_release_notes", generateReleaseNotes)
+        }
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/releases") {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to create release (${res.status.value})")
+        }
+        return res.body<RestReleaseDto>().toReleaseSummary()
     }
 
     suspend fun postComment(owner: String, repo: String, number: Int, body: String) {

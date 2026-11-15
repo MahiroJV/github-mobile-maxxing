@@ -22,6 +22,7 @@ import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.RateLimitInfo
+import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
@@ -167,6 +168,7 @@ class GitHubRepository(
     private val workflowRunsCache = LruMemoryCache<WorkflowRunsKey, List<WorkflowRunSummary>>(ttl = 30.seconds, maxEntries = 48)
     private val workflowJobsCache = LruMemoryCache<WorkflowRunIdKey, List<WorkflowJobSummary>>(ttl = 30.seconds, maxEntries = 48)
     private val checkRunsCache = LruMemoryCache<RepoPathKey, List<CheckRunSummary>>(ttl = 30.seconds, maxEntries = 48)
+    private val releasesCache = LruMemoryCache<RepoKey, List<ReleaseSummary>>(ttl = 120.seconds, maxEntries = 32)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -206,6 +208,7 @@ class GitHubRepository(
         workflowRunsCache.clear()
         workflowJobsCache.clear()
         checkRunsCache.clear()
+        releasesCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -1107,5 +1110,51 @@ class GitHubRepository(
         }.onSuccess {
             checkRunsCache.put(key, it)
         }
+    }
+
+    fun peekReleases(owner: String, repo: String): List<ReleaseSummary>? =
+        releasesCache.peek(RepoKey(owner, repo))
+
+    suspend fun getReleases(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<List<ReleaseSummary>> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            releasesCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchReleases(owner, repo)
+        }.onSuccess {
+            releasesCache.put(key, it)
+        }
+    }
+
+    suspend fun createRelease(
+        owner: String,
+        repo: String,
+        tagName: String,
+        name: String,
+        body: String = "",
+        targetCommitish: String? = null,
+        isDraft: Boolean = false,
+        isPrerelease: Boolean = false,
+        generateReleaseNotes: Boolean = true
+    ): Result<ReleaseSummary> = runCatching {
+        restService.createRelease(
+            owner = owner,
+            repo = repo,
+            tagName = tagName,
+            name = name,
+            body = body,
+            targetCommitish = targetCommitish,
+            isDraft = isDraft,
+            isPrerelease = isPrerelease,
+            generateReleaseNotes = generateReleaseNotes
+        )
+    }.onSuccess {
+        releasesCache.invalidate(RepoKey(owner, repo))
+        tagsCache.invalidate(RepoKey(owner, repo))
     }
 }

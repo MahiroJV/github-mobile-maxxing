@@ -120,6 +120,7 @@ import dev.octoexpress.model.IssueOrPullKind
 import dev.octoexpress.model.IssueOrPullState
 import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
+import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.TagRef
@@ -157,6 +158,7 @@ private enum class RepoDetailTab(val label: String) {
     CODE("Code"),
     COMMITS("Commits"),
     ACTIONS("Actions"),
+    RELEASES("Releases"),
     ISSUES("Issues"),
     PULLS("PRs")
 }
@@ -1119,6 +1121,34 @@ fun RepoDetailScreen(
     var jobLogsLoading by remember(repo.fullName) { mutableStateOf(false) }
     var actionsBusy by remember(repo.fullName) { mutableStateOf(false) }
     var showDispatchDialog by remember { mutableStateOf(false) }
+    var releases by remember(repo.fullName) { mutableStateOf(container.repository.peekReleases(repo.owner, repo.name)) }
+    var releasesLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var releasesError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var showCreateReleaseDialog by remember { mutableStateOf(false) }
+    var creatingRelease by remember { mutableStateOf(false) }
+    var createReleaseError by remember { mutableStateOf<String?>(null) }
+
+    fun loadReleases(forceRefresh: Boolean = false) {
+        scope.launch {
+            val cached = container.repository.peekReleases(repo.owner, repo.name)
+            if (cached != null) {
+                releases = cached
+                releasesLoading = false
+            } else {
+                releasesLoading = true
+            }
+            releasesError = null
+            container.repository.getReleases(repo.owner, repo.name, forceRefresh = forceRefresh)
+                .onSuccess {
+                    releases = it
+                    releasesLoading = false
+                }
+                .onFailure {
+                    releasesError = it.message ?: "Failed to load releases"
+                    releasesLoading = false
+                }
+        }
+    }
 
     fun loadActions(workflowId: Long? = selectedWorkflowId, forceRefresh: Boolean = false) {
         scope.launch {
@@ -1396,6 +1426,10 @@ fun RepoDetailScreen(
                 .onSuccess { if (issueStateFilter == IssueStateFilter.OPEN && repoIssues == null) repoIssues = it }
         }
         scope.launch {
+            container.repository.getReleases(repo.owner, repo.name)
+                .onSuccess { if (releases == null) releases = it }
+        }
+        scope.launch {
             container.repository.getRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = true, stateFilter = IssueStateFilter.OPEN)
                 .onSuccess { if (pullStateFilter == IssueStateFilter.OPEN && repoPulls == null) repoPulls = it }
         }
@@ -1407,6 +1441,9 @@ fun RepoDetailScreen(
         }
         if (activeTab == RepoDetailTab.ACTIONS && openedRun == null) {
             loadActions(selectedWorkflowId, forceRefresh = false)
+        }
+        if (activeTab == RepoDetailTab.RELEASES) {
+            loadReleases(forceRefresh = false)
         }
     }
 
@@ -1644,6 +1681,7 @@ fun RepoDetailScreen(
                             RepoDetailTab.CODE -> Lucide.Folder
                             RepoDetailTab.COMMITS -> Lucide.GitCommitHorizontal
                             RepoDetailTab.ACTIONS -> Lucide.Play
+                            RepoDetailTab.RELEASES -> Lucide.Tag
                             RepoDetailTab.ISSUES -> Lucide.CircleDot
                             RepoDetailTab.PULLS -> Lucide.GitPullRequest
                         }
@@ -1958,6 +1996,27 @@ fun RepoDetailScreen(
                 }
             }
 
+            RepoDetailTab.RELEASES -> {
+                RepoReleasesTabContent(
+                    releases = releases,
+                    tags = repoTags,
+                    isLoading = releasesLoading,
+                    errorMsg = releasesError,
+                    onRefresh = { loadReleases(forceRefresh = true) },
+                    onOpenCreateRelease = {
+                        createReleaseError = null
+                        showCreateReleaseDialog = true
+                    },
+                    onSelectTag = { tag ->
+                        currentRef = tag.name
+                        currentPath = ""
+                        openedFile = null
+                        activeTab = RepoDetailTab.CODE
+                        loadDirectory("", tag.name)
+                    }
+                )
+            }
+
             RepoDetailTab.ISSUES -> {
                 RepoIssuesOrPullsTabContent(
                     kindLabel = "Issues",
@@ -1992,6 +2051,41 @@ fun RepoDetailScreen(
                 )
             }
         }
+    }
+
+    if (showCreateReleaseDialog) {
+        CreateReleaseDialog(
+            defaultTargetBranch = currentRef.ifBlank { repo.defaultBranch },
+            isSubmitting = creatingRelease,
+            errorMsg = createReleaseError,
+            onDismiss = { showCreateReleaseDialog = false },
+            onCreate = { tagName, title, body, targetCommitish, isDraft, isPrerelease, generateNotes ->
+                scope.launch {
+                    creatingRelease = true
+                    createReleaseError = null
+                    container.repository.createRelease(
+                        owner = repo.owner,
+                        repo = repo.name,
+                        tagName = tagName,
+                        name = title,
+                        body = body,
+                        targetCommitish = targetCommitish.takeIf { it.isNotBlank() },
+                        isDraft = isDraft,
+                        isPrerelease = isPrerelease,
+                        generateReleaseNotes = generateNotes
+                    ).onSuccess {
+                        creatingRelease = false
+                        showCreateReleaseDialog = false
+                        loadReleases(forceRefresh = true)
+                        container.repository.getRepoTags(repo.owner, repo.name, forceRefresh = true)
+                            .onSuccess { repoTags = it }
+                    }.onFailure { err ->
+                        creatingRelease = false
+                        createReleaseError = err.message ?: "Failed to create release"
+                    }
+                }
+            }
+        )
     }
 
     if (showCreateIssueDialog) {
