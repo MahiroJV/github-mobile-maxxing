@@ -26,7 +26,6 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,13 +57,11 @@ import com.composables.icons.lucide.Building2
 import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Folder
-import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.Link2
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.UserCheck
-import com.composables.icons.lucide.UserPlus
 import com.composables.icons.lucide.Users
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
@@ -85,12 +82,19 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
-private enum class ProfileTab(val label: String) {
+internal enum class ProfileTab(val label: String) {
     REPOS("Repos"),
     STARRED("Starred"),
     ACTIVITY("Activity"),
     FOLLOWERS("Followers"),
     FOLLOWING("Following")
+}
+
+internal fun formatProfileTabLabel(tab: ProfileTab, profile: UserProfile): String = when (tab) {
+    ProfileTab.REPOS -> "${tab.label} (${profile.publicReposCount})"
+    ProfileTab.FOLLOWERS -> "${tab.label} (${profile.followersCount})"
+    ProfileTab.FOLLOWING -> "${tab.label} (${profile.followingCount})"
+    ProfileTab.STARRED, ProfileTab.ACTIVITY -> tab.label
 }
 
 @OptIn(
@@ -348,29 +352,6 @@ fun UserProfileScreen(
                                             }
                                         }
                                     }
-
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        FilterChip(
-                                            selected = activeTab == ProfileTab.REPOS,
-                                            onClick = { activeTab = ProfileTab.REPOS },
-                                            leadingIcon = { Icon(Lucide.FolderGit2, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                                            label = { Text("${p.publicReposCount} repos") }
-                                        )
-                                        FilterChip(
-                                            selected = activeTab == ProfileTab.FOLLOWERS,
-                                            onClick = { activeTab = ProfileTab.FOLLOWERS },
-                                            leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                                            label = { Text("${p.followersCount} followers") }
-                                        )
-                                        if (!p.isOrganization) {
-                                            FilterChip(
-                                                selected = activeTab == ProfileTab.FOLLOWING,
-                                                onClick = { activeTab = ProfileTab.FOLLOWING },
-                                                leadingIcon = { Icon(Lucide.UserPlus, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                                                label = { Text("${p.followingCount} following") }
-                                            )
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -435,7 +416,7 @@ fun UserProfileScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
-                                                Text(tab.label, maxLines = 1, softWrap = false)
+                                                Text(formatProfileTabLabel(tab, p), maxLines = 1, softWrap = false)
                                             }
                                         }
                                     )
