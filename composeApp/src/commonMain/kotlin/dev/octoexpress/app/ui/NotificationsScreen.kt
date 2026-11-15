@@ -3,7 +3,6 @@ package dev.octoexpress.app.ui
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
@@ -27,14 +25,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
@@ -55,12 +54,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.BellOff
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.CheckCheck
@@ -69,9 +70,11 @@ import com.composables.icons.lucide.GitCommitHorizontal
 import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.Inbox
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Tag
+import com.composables.icons.lucide.UserCheck
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
@@ -94,7 +97,7 @@ private enum class InboxFilter(val label: String) {
     ALL("All")
 }
 
-private enum class ReasonFilter(val label: String) {
+internal enum class ReasonFilter(val label: String) {
     ALL("All Reasons"),
     REVIEWS("Review Req"),
     MENTIONS("Mentions"),
@@ -331,17 +334,31 @@ fun NotificationsScreen(
                             OctoCollapsibleSection(visible = showExpandedHeader) {
                                 Column {
                                     Spacer(Modifier.height(8.dp))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    PrimaryScrollableTabRow(
+                                        selectedTabIndex = ReasonFilter.entries.indexOf(reasonFilter).coerceAtLeast(0),
+                                        containerColor = Color.Transparent,
+                                        edgePadding = 0.dp
                                     ) {
                                         ReasonFilter.entries.forEach { rf ->
-                                            FilterChip(
+                                            val icon = when (rf) {
+                                                ReasonFilter.ALL -> Lucide.Inbox
+                                                ReasonFilter.REVIEWS -> Lucide.GitPullRequest
+                                                ReasonFilter.MENTIONS -> Lucide.MessageSquare
+                                                ReasonFilter.ASSIGNED -> Lucide.UserCheck
+                                                ReasonFilter.CI -> Lucide.Activity
+                                            }
+                                            Tab(
                                                 selected = reasonFilter == rf,
                                                 onClick = { reasonFilter = rf },
-                                                label = { Text(rf.label) }
+                                                text = {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                                                        Text(rf.label, maxLines = 1, softWrap = false)
+                                                    }
+                                                }
                                             )
                                         }
                                     }

@@ -24,10 +24,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
@@ -218,27 +219,28 @@ fun IssuesPullsScreen(
                         OctoCollapsibleSection(visible = !headerTracker.isCollapsed) {
                             Column {
                                 Spacer(Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                PrimaryTabRow(
+                                    selectedTabIndex = IssueStateFilter.entries.indexOf(stateFilter).coerceAtLeast(0),
+                                    containerColor = Color.Transparent
                                 ) {
                                     IssueStateFilter.entries.forEach { sf ->
-                                        FilterChip(
+                                        val icon = when (sf) {
+                                            IssueStateFilter.OPEN -> Lucide.CircleDot
+                                            IssueStateFilter.CLOSED -> Lucide.CircleCheck
+                                            IssueStateFilter.ALL -> Lucide.Layers
+                                        }
+                                        Tab(
                                             selected = stateFilter == sf,
                                             onClick = { stateFilter = sf },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = when (sf) {
-                                                        IssueStateFilter.OPEN -> Lucide.CircleDot
-                                                        IssueStateFilter.CLOSED -> Lucide.CircleCheck
-                                                        IssueStateFilter.ALL -> Lucide.Layers
-                                                    },
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(15.dp)
-                                                )
-                                            },
-                                            label = { Text(sf.label) }
+                                            text = {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+                                                    Text(sf.label, maxLines = 1, softWrap = false)
+                                                }
+                                            }
                                         )
                                     }
                                 }
