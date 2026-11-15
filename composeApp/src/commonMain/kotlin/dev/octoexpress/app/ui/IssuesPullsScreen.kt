@@ -1,0 +1,421 @@
+package dev.octoexpress.app.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.layout.AnimatedPane
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffold
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.CircleDot
+import com.composables.icons.lucide.GitPullRequest
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.MessageSquare
+import com.composables.icons.lucide.RefreshCw
+import dev.octoexpress.app.AppContainer
+import dev.octoexpress.app.IssuePullTarget
+import dev.octoexpress.model.IssueFilterPreset
+import dev.octoexpress.model.IssueOrPullKind
+import dev.octoexpress.model.IssueOrPullState
+import dev.octoexpress.model.IssueOrPullSummary
+import dev.octoexpress.model.IssueStateFilter
+import dev.octoexpress.ui.components.ExpressiveStatusPill
+import dev.octoexpress.ui.components.GitHubLabelChip
+import dev.octoexpress.ui.components.OctoConnectedButtonGroup
+import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoWavyProgress
+import dev.octoexpress.ui.components.UserAvatar
+import dev.octoexpress.ui.components.expressiveAnimateContentSize
+import kotlinx.coroutines.launch
+
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalMaterial3AdaptiveApi::class,
+    ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalComposeUiApi::class
+)
+@Composable
+fun IssuesPullsScreen(
+    container: AppContainer,
+    onMessage: (String) -> Unit
+) {
+    val navigator = rememberListDetailPaneScaffoldNavigator<IssuePullTarget>()
+    val scope = rememberCoroutineScope()
+    val profile by container.viewerProfile.collectAsState()
+    val session by container.sessionManager.session.collectAsState()
+    val login = profile?.login ?: session?.userLogin ?: ""
+
+    var preset by remember { mutableStateOf(IssueFilterPreset.CREATED) }
+    var stateFilter by remember { mutableStateOf(IssueStateFilter.OPEN) }
+    var items by remember {
+        mutableStateOf(
+            if (login.isNotBlank()) {
+                container.repository.peekMyIssuesAndPulls(preset, login, stateFilter).orEmpty()
+            } else emptyList()
+        )
+    }
+    var isLoading by remember { mutableStateOf(items.isEmpty() && login.isNotBlank()) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    BackHandler(enabled = navigator.canNavigateBack()) {
+        scope.launch { navigator.navigateBack() }
+    }
+
+    fun loadItems(forceRefresh: Boolean = false) {
+        if (login.isBlank()) return
+        scope.launch {
+            val cached = container.repository.peekMyIssuesAndPulls(preset, login, stateFilter)
+            if (cached != null) {
+                items = cached
+                isLoading = false
+            } else {
+                isLoading = true
+            }
+            if (forceRefresh) {
+                isRefreshing = true
+            }
+            errorMsg = null
+            container.repository.getMyIssuesAndPulls(preset, login, stateFilter, forceRefresh = forceRefresh)
+                .onSuccess { loaded ->
+                    items = loaded
+                    isLoading = false
+                    isRefreshing = false
+                    container.prefetchIssuePullTargets(
+                        loaded.take(3).map { IssuePullTarget(it.repoOwner, it.repoName, it.number, it.title) }
+                    )
+                }
+                .onFailure {
+                    val msg = it.message ?: "Failed to load issues and PRs"
+                    errorMsg = msg
+                    isLoading = false
+                    isRefreshing = false
+                    if (items.isNotEmpty() || forceRefresh) {
+                        onMessage(msg)
+                    }
+                }
+        }
+    }
+
+    LaunchedEffect(preset, stateFilter, login) {
+        loadItems(forceRefresh = false)
+    }
+
+    ListDetailPaneScaffold(
+        directive = navigator.scaffoldDirective,
+        value = navigator.scaffoldValue,
+        listPane = {
+            AnimatedPane {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Issues & PRs",
+                                style = MaterialTheme.typography.headlineMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { loadItems(forceRefresh = true) }) {
+                                Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        OctoConnectedButtonGroup(
+                            options = IssueFilterPreset.entries,
+                            selected = preset,
+                            onSelect = { preset = it },
+                            labelProvider = {
+                                when (it) {
+                                    IssueFilterPreset.CREATED -> "Created"
+                                    IssueFilterPreset.ASSIGNED -> "Assigned"
+                                    IssueFilterPreset.REVIEW_REQUESTED -> "Reviews"
+                                    IssueFilterPreset.MENTIONED -> "Mentioned"
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IssueStateFilter.entries.forEach { sf ->
+                                FilterChip(
+                                    selected = stateFilter == sf,
+                                    onClick = { stateFilter = sf },
+                                    label = { Text(sf.label) }
+                                )
+                            }
+                        }
+
+                        if ((isLoading || isRefreshing) && items.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            OctoWavyProgress()
+                        }
+                    }
+
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing && items.isNotEmpty(),
+                        onRefresh = { loadItems(forceRefresh = true) },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        when {
+                            isLoading && items.isEmpty() -> {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    OctoLoadingState(message = "Fetching your issues & PRs...")
+                                }
+                            }
+
+                            errorMsg != null && items.isEmpty() -> {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(errorMsg!!, color = MaterialTheme.colorScheme.error)
+                                    Spacer(Modifier.height(10.dp))
+                                    FilledTonalButton(onClick = { loadItems(forceRefresh = true) }) {
+                                        Text("Retry")
+                                    }
+                                }
+                            }
+
+                            items.isEmpty() -> {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        Lucide.GitPullRequest,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(52.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    Text(
+                                        text = "No ${stateFilter.label} Issues or PRs",
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        text = "There are no ${stateFilter.label.lowercase()} items for '${preset.name.lowercase().replace('_', ' ')}'.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            else -> {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(
+                                    items = items,
+                                    key = { it.id },
+                                    contentType = { "issue_pull_summary" }
+                                ) { summary ->
+                                    val isSelected = navigator.currentDestination?.contentKey?.let {
+                                        it.owner == summary.repoOwner &&
+                                            it.repo == summary.repoName &&
+                                            it.number == summary.number
+                                    } == true
+                                    IssuePullSummaryCard(
+                                        item = summary,
+                                        selected = isSelected,
+                                        onClick = {
+                                            scope.launch {
+                                                navigator.navigateTo(
+                                                    ListDetailPaneScaffoldRole.Detail,
+                                                    IssuePullTarget(
+                                                        owner = summary.repoOwner,
+                                                        repo = summary.repoName,
+                                                        number = summary.number,
+                                                        hintTitle = summary.title
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    }
+                }
+            }
+        },
+        detailPane = {
+            AnimatedPane {
+                val target = navigator.currentDestination?.contentKey
+                if (target != null) {
+                    IssuePullDetailPane(
+                        target = target,
+                        container = container,
+                        showBackButton = navigator.canNavigateBack(),
+                        onBack = { scope.launch { navigator.navigateBack() } },
+                        onMessage = onMessage
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Select an Issue or Pull Request",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun IssuePullSummaryCard(
+    item: IssueOrPullSummary,
+    selected: Boolean = false,
+    onClick: () -> Unit
+) {
+    val stateColor = when {
+        item.isDraft -> MaterialTheme.colorScheme.onSurfaceVariant
+        item.state == IssueOrPullState.OPEN -> Color(0xFF16A34A)
+        item.state == IssueOrPullState.MERGED -> Color(0xFF7C3AED)
+        else -> MaterialTheme.colorScheme.error
+    }
+
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            }
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (item.kind == IssueOrPullKind.PULL_REQUEST) Lucide.GitPullRequest else Lucide.CircleDot,
+                    contentDescription = null,
+                    tint = stateColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "${item.repoFullName} #${item.number}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                item.checkRollup?.let { rollup ->
+                    val ciColor = when (rollup.state) {
+                        "SUCCESS" -> Color(0xFF16A34A)
+                        "FAILURE", "ERROR" -> MaterialTheme.colorScheme.error
+                        else -> Color(0xFFD97706)
+                    }
+                    ExpressiveStatusPill(
+                        label = rollup.state,
+                        containerColor = ciColor.copy(alpha = 0.16f),
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (item.labels.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    item.labels.forEach { GitHubLabelChip(it.name, it.colorHex) }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                UserAvatar(item.author.avatarUrl, item.author.login, sizeDp = 20)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "@${item.author.login}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.weight(1f))
+                if (item.commentCount > 0) {
+                    Icon(
+                        Lucide.MessageSquare,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = item.commentCount.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
