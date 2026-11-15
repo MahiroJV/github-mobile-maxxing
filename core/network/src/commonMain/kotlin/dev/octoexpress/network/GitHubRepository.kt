@@ -15,6 +15,8 @@ import dev.octoexpress.model.DiscussionDetail
 import dev.octoexpress.model.DiscussionListData
 import dev.octoexpress.model.DiscussionSummary
 import dev.octoexpress.model.FileContent
+import dev.octoexpress.model.GistDetail
+import dev.octoexpress.model.GistSummary
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
@@ -180,6 +182,8 @@ class GitHubRepository(
     private val discussionsCache = LruMemoryCache<DiscussionsKey, DiscussionListData>(ttl = 60.seconds, maxEntries = 32)
     private val discussionDetailCache = LruMemoryCache<IssuePullKey, DiscussionDetail>(ttl = 45.seconds, maxEntries = 32)
     private val securityOverviewCache = LruMemoryCache<RepoKey, RepoSecurityOverview>(ttl = 90.seconds, maxEntries = 32)
+    private val gistsCache = LruMemoryCache<String, List<GistSummary>>(ttl = 60.seconds, maxEntries = 16)
+    private val gistDetailCache = LruMemoryCache<String, GistDetail>(ttl = 60.seconds, maxEntries = 32)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -223,6 +227,8 @@ class GitHubRepository(
         discussionsCache.clear()
         discussionDetailCache.clear()
         securityOverviewCache.clear()
+        gistsCache.clear()
+        gistDetailCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -1427,5 +1433,81 @@ class GitHubRepository(
         graphQlService.deleteIssueComment(commentId)
     }.onSuccess {
         issueDetailCache.invalidate(IssuePullKey(owner, repo, issueOrPullNumber))
+    }
+
+    private fun gistCacheKey(starred: Boolean, userLogin: String?): String = when {
+        starred -> "STARRED"
+        !userLogin.isNullOrBlank() -> "USER:${userLogin.trim()}"
+        else -> "MINE"
+    }
+
+    fun peekGists(starred: Boolean = false, userLogin: String? = null): List<GistSummary>? =
+        gistsCache.peek(gistCacheKey(starred, userLogin))
+
+    suspend fun getGists(
+        starred: Boolean = false,
+        userLogin: String? = null,
+        forceRefresh: Boolean = false
+    ): Result<List<GistSummary>> {
+        val key = gistCacheKey(starred, userLogin)
+        if (!forceRefresh) {
+            gistsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchGists(starred = starred, userLogin = userLogin)
+        }.onSuccess {
+            gistsCache.put(key, it)
+        }
+    }
+
+    fun peekGistDetail(gistId: String): GistDetail? = gistDetailCache.peek(gistId)
+
+    suspend fun getGistDetail(gistId: String, forceRefresh: Boolean = false): Result<GistDetail> {
+        if (!forceRefresh) {
+            gistDetailCache.peekIfFresh(gistId)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchGistDetail(gistId)
+        }.onSuccess {
+            gistDetailCache.put(gistId, it)
+        }
+    }
+
+    suspend fun createGist(
+        description: String,
+        isPublic: Boolean,
+        files: Map<String, String>
+    ): Result<GistDetail> = runCatching {
+        restService.createGist(description = description, isPublic = isPublic, files = files)
+    }.onSuccess { detail ->
+        gistsCache.clear()
+        gistDetailCache.put(detail.summary.id, detail)
+    }
+
+    suspend fun updateGist(
+        gistId: String,
+        description: String? = null,
+        updatedFiles: Map<String, String?>
+    ): Result<GistDetail> = runCatching {
+        restService.updateGist(gistId = gistId, description = description, updatedFiles = updatedFiles)
+    }.onSuccess { detail ->
+        gistsCache.clear()
+        gistDetailCache.put(gistId, detail)
+    }
+
+    suspend fun setGistStarred(gistId: String, starred: Boolean): Result<Unit> = runCatching {
+        restService.setGistStarred(gistId, starred)
+    }.onSuccess {
+        gistsCache.invalidate("STARRED")
+        gistDetailCache.peek(gistId)?.let { existing ->
+            gistDetailCache.put(gistId, existing.copy(viewerHasStarred = starred))
+        }
+    }
+
+    suspend fun deleteGist(gistId: String): Result<Unit> = runCatching {
+        restService.deleteGist(gistId)
+    }.onSuccess {
+        gistsCache.clear()
+        gistDetailCache.invalidate(gistId)
     }
 }

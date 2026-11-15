@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.BookMarked
 import com.composables.icons.lucide.CircleDot
+import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Flame
 import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.GitBranch
@@ -106,6 +107,7 @@ fun HomeScreen(
     onNavigateInbox: () -> Unit,
     onNavigateIssuesPrs: () -> Unit,
     onNavigateRepos: () -> Unit,
+    onOpenGists: () -> Unit = {},
     onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
@@ -156,6 +158,7 @@ fun HomeScreen(
                     )
                 },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
+                onOpenGists = onOpenGists,
                 onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
@@ -173,6 +176,7 @@ private fun HomeDashboardPane(
     onNavigateRepos: () -> Unit,
     onOpenRepo: (owner: String, name: String) -> Unit,
     onOpenIssueOrPull: (IssuePullTarget) -> Unit,
+    onOpenGists: () -> Unit,
     onOpenUser: (String) -> Unit,
     onMessage: (String) -> Unit
 ) {
@@ -287,6 +291,9 @@ private fun HomeDashboardPane(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+                IconButton(onClick = onOpenGists) {
+                    Icon(Lucide.FileCode, contentDescription = "Gists", modifier = Modifier.size(18.dp))
                 }
                 IconButton(onClick = { loadHome(forceRefresh = true) }) {
                     Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))

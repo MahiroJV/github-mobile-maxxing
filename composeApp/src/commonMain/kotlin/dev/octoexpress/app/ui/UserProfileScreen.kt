@@ -53,6 +53,7 @@ import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Building2
 import com.composables.icons.lucide.ExternalLink
+import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.Link2
@@ -104,6 +105,7 @@ fun UserProfileScreen(
     onOpenRepo: (RepoSummary) -> Unit,
     onOpenIssueOrPull: (IssuePullTarget) -> Unit,
     onOpenUser: (String) -> Unit,
+    onOpenGists: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
     val viewerProfile by container.viewerProfile.collectAsState()
@@ -208,6 +210,9 @@ fun UserProfileScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+                    IconButton(onClick = { onOpenGists(if (selfLogin.equals(login, ignoreCase = true)) "" else login) }) {
+                        Icon(Lucide.FileCode, contentDescription = "Gists", modifier = Modifier.size(18.dp))
+                    }
                     IconButton(onClick = { loadProfile(forceRefresh = true) }) {
                         Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
                     }

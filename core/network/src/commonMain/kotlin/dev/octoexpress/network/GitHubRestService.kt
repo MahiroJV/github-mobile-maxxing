@@ -11,6 +11,9 @@ import dev.octoexpress.model.CommitSummary
 import dev.octoexpress.model.DependabotAlertSummary
 import dev.octoexpress.model.FileChangeStatus
 import dev.octoexpress.model.FileContent
+import dev.octoexpress.model.GistDetail
+import dev.octoexpress.model.GistFile
+import dev.octoexpress.model.GistSummary
 import dev.octoexpress.model.IssueOrPullKind
 import dev.octoexpress.model.IssueOrPullState
 import dev.octoexpress.model.IssueOrPullSummary
@@ -633,6 +636,52 @@ private data class FileMutationCommitDto(
 @Serializable
 private data class FileMutationResultDto(
     val commit: FileMutationCommitDto? = null
+)
+
+@Serializable
+private data class RestGistOwnerDto(
+    val login: String = "",
+    @SerialName("avatar_url") val avatarUrl: String = ""
+)
+
+@Serializable
+private data class RestGistFileDto(
+    val filename: String = "",
+    val language: String? = null,
+    @SerialName("raw_url") val rawUrl: String = "",
+    val size: Long = 0L,
+    val content: String? = null
+)
+
+@Serializable
+private data class RestGistDto(
+    val id: String,
+    val description: String? = null,
+    val public: Boolean = true,
+    @SerialName("html_url") val htmlUrl: String = "",
+    val owner: RestGistOwnerDto? = null,
+    val files: Map<String, RestGistFileDto> = emptyMap(),
+    val comments: Int = 0,
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = ""
+)
+
+@Serializable
+private data class CreateOrUpdateGistFileRequest(
+    val content: String
+)
+
+@Serializable
+private data class CreateGistRequest(
+    val description: String,
+    val public: Boolean,
+    val files: Map<String, CreateOrUpdateGistFileRequest>
+)
+
+@Serializable
+private data class UpdateGistRequest(
+    val description: String? = null,
+    val files: Map<String, CreateOrUpdateGistFileRequest?>
 )
 
 class GitHubRestService(
@@ -1319,6 +1368,136 @@ class GitHubRestService(
             throw GitHubApiException(res.status.value, "Failed to delete file (${res.status.value})")
         }
         return res.body<FileMutationResultDto>().commit?.sha.orEmpty()
+    }
+
+    suspend fun fetchGists(
+        starred: Boolean = false,
+        userLogin: String? = null,
+        page: Int = 1,
+        perPage: Int = 30
+    ): List<GistSummary> {
+        val url = when {
+            starred -> "$baseUrl/gists/starred"
+            !userLogin.isNullOrBlank() -> "$baseUrl/users/${userLogin.trim()}/gists"
+            else -> "$baseUrl/gists"
+        }
+        val res = httpClient.get(url) {
+            parameter("page", page)
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load gists (${res.status.value})")
+        }
+        return res.body<List<RestGistDto>>().map { it.toGistSummary() }
+    }
+
+    suspend fun fetchGistDetail(gistId: String): GistDetail {
+        val res = httpClient.get("$baseUrl/gists/$gistId")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load gist (${res.status.value})")
+        }
+        val dto = res.body<RestGistDto>()
+        val isStarred = runCatching {
+            httpClient.get("$baseUrl/gists/$gistId/star").status.value == 204
+        }.getOrDefault(false)
+        return dto.toGistDetail(viewerHasStarred = isStarred)
+    }
+
+    suspend fun createGist(
+        description: String,
+        isPublic: Boolean,
+        files: Map<String, String>
+    ): GistDetail {
+        require(files.isNotEmpty()) { "At least one file is required" }
+        val payloadFiles = files.entries.associate { (name, body) ->
+            name.trim().ifBlank { "snippet.txt" } to CreateOrUpdateGistFileRequest(content = body)
+        }
+        val res = httpClient.post("$baseUrl/gists") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                CreateGistRequest(
+                    description = description.trim(),
+                    public = isPublic,
+                    files = payloadFiles
+                )
+            )
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to create gist (${res.status.value})")
+        }
+        return res.body<RestGistDto>().toGistDetail(viewerHasStarred = false)
+    }
+
+    suspend fun updateGist(
+        gistId: String,
+        description: String? = null,
+        updatedFiles: Map<String, String?>
+    ): GistDetail {
+        val payloadFiles = updatedFiles.mapValues { (_, body) ->
+            body?.let { CreateOrUpdateGistFileRequest(content = it) }
+        }
+        val res = httpClient.patch("$baseUrl/gists/$gistId") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                UpdateGistRequest(
+                    description = description?.trim(),
+                    files = payloadFiles
+                )
+            )
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to update gist (${res.status.value})")
+        }
+        val dto = res.body<RestGistDto>()
+        val isStarred = runCatching {
+            httpClient.get("$baseUrl/gists/$gistId/star").status.value == 204
+        }.getOrDefault(false)
+        return dto.toGistDetail(viewerHasStarred = isStarred)
+    }
+
+    suspend fun setGistStarred(gistId: String, starred: Boolean) {
+        val url = "$baseUrl/gists/$gistId/star"
+        val res = if (starred) httpClient.put(url) else httpClient.delete(url)
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to update gist star (${res.status.value})")
+        }
+    }
+
+    suspend fun deleteGist(gistId: String) {
+        val res = httpClient.delete("$baseUrl/gists/$gistId")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to delete gist (${res.status.value})")
+        }
+    }
+
+    private fun RestGistDto.toGistSummary(): GistSummary = GistSummary(
+        id = id,
+        description = description.orEmpty(),
+        isPublic = public,
+        htmlUrl = htmlUrl,
+        ownerLogin = owner?.login.orEmpty(),
+        ownerAvatarUrl = owner?.avatarUrl.orEmpty(),
+        files = files.entries.map { (key, fileDto) ->
+            GistFile(
+                filename = fileDto.filename.ifBlank { key },
+                language = fileDto.language,
+                rawUrl = fileDto.rawUrl,
+                size = fileDto.size,
+                content = fileDto.content.orEmpty()
+            )
+        },
+        commentsCount = comments,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+
+    private fun RestGistDto.toGistDetail(viewerHasStarred: Boolean): GistDetail {
+        val summary = toGistSummary()
+        return GistDetail(
+            summary = summary,
+            files = summary.files,
+            viewerHasStarred = viewerHasStarred
+        )
     }
 
     @OptIn(ExperimentalEncodingApi::class)

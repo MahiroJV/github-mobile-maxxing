@@ -1,0 +1,666 @@
+package dev.octoexpress.app.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.ExternalLink
+import com.composables.icons.lucide.FileCode
+import com.composables.icons.lucide.Globe
+import com.composables.icons.lucide.Lock
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.MessageSquare
+import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.Plus
+import com.composables.icons.lucide.RefreshCw
+import com.composables.icons.lucide.Trash2
+import dev.octoexpress.app.AppContainer
+import dev.octoexpress.auth.openUrlInBrowser
+import dev.octoexpress.model.GistDetail
+import dev.octoexpress.model.GistSummary
+import dev.octoexpress.ui.components.CodeViewer
+import dev.octoexpress.ui.components.ExpressiveStatusPill
+import dev.octoexpress.ui.components.GitHubMarkdown
+import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoWavyProgress
+import dev.octoexpress.ui.components.StarActionButton
+import dev.octoexpress.ui.components.UserAvatar
+import kotlinx.coroutines.launch
+
+private enum class GistsTab(val label: String) {
+    MINE("My Gists"),
+    STARRED("Starred")
+}
+
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalComposeUiApi::class
+)
+@Composable
+fun GistsScreen(
+    container: AppContainer,
+    userLogin: String? = null,
+    onBack: () -> Unit,
+    onMessage: (String) -> Unit
+) {
+    val viewerProfile by container.viewerProfile.collectAsState()
+    val session by container.sessionManager.session.collectAsState()
+    val selfLogin = viewerProfile?.login ?: session?.userLogin
+    val targetUser = userLogin?.takeIf { it.isNotBlank() && !it.equals(selfLogin, ignoreCase = true) }
+
+    var activeTab by remember(targetUser) { mutableStateOf(GistsTab.MINE) }
+    var gists by remember(targetUser, activeTab) {
+        mutableStateOf(
+            container.repository.peekGists(
+                starred = targetUser == null && activeTab == GistsTab.STARRED,
+                userLogin = targetUser
+            )
+        )
+    }
+    var selectedDetail by remember { mutableStateOf<GistDetail?>(null) }
+    var isLoading by remember { mutableStateOf(gists == null) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var requestSeq by remember { mutableStateOf(0) }
+
+    var showEditorDialog by remember { mutableStateOf(false) }
+    var editingDetail by remember { mutableStateOf<GistDetail?>(null) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var mutationBusy by remember { mutableStateOf(false) }
+    var mutationError by remember { mutableStateOf<String?>(null) }
+
+    val scope = rememberCoroutineScope()
+
+    BackHandler(enabled = true) {
+        if (selectedDetail != null) selectedDetail = null else onBack()
+    }
+
+    fun loadGists(forceRefresh: Boolean = false) {
+        val isStarred = targetUser == null && activeTab == GistsTab.STARRED
+        val seq = ++requestSeq
+        val cached = container.repository.peekGists(starred = isStarred, userLogin = targetUser)
+        if (cached != null) gists = cached
+        if (forceRefresh) isRefreshing = true else if (cached == null) isLoading = true
+        errorMsg = null
+        scope.launch {
+            container.repository.getGists(
+                starred = isStarred,
+                userLogin = targetUser,
+                forceRefresh = forceRefresh
+            ).onSuccess { list ->
+                if (seq == requestSeq) gists = list
+            }.onFailure { err ->
+                if (seq == requestSeq) {
+                    errorMsg = err.message ?: "Failed to load gists"
+                    if (forceRefresh) onMessage(errorMsg!!)
+                }
+            }
+            if (seq == requestSeq) {
+                isLoading = false
+                isRefreshing = false
+            }
+        }
+    }
+
+    fun openGist(summary: GistSummary) {
+        val cached = container.repository.peekGistDetail(summary.id)
+        selectedDetail = cached ?: GistDetail(summary = summary, files = summary.files)
+        scope.launch {
+            container.repository.getGistDetail(summary.id, forceRefresh = cached == null)
+                .onSuccess { detail ->
+                    if (selectedDetail?.summary?.id == detail.summary.id) {
+                        selectedDetail = detail
+                    }
+                }
+                .onFailure { err -> onMessage(err.message ?: "Failed to load gist details") }
+        }
+    }
+
+    LaunchedEffect(targetUser, activeTab) {
+        loadGists(forceRefresh = false)
+    }
+
+    val opened = selectedDetail
+    if (opened != null) {
+        GistDetailView(
+            detail = opened,
+            isOwner = selfLogin != null && opened.summary.ownerLogin.equals(selfLogin, ignoreCase = true),
+            onBack = { selectedDetail = null },
+            onToggleStar = {
+                val targetStar = !opened.viewerHasStarred
+                selectedDetail = opened.copy(viewerHasStarred = targetStar)
+                scope.launch {
+                    container.repository.setGistStarred(opened.summary.id, targetStar)
+                        .onSuccess {
+                            onMessage(if (targetStar) "Starred gist" else "Unstarred gist")
+                        }
+                        .onFailure { err ->
+                            selectedDetail = opened
+                            onMessage(err.message ?: "Failed to update star")
+                        }
+                }
+            },
+            onEdit = {
+                editingDetail = opened
+                mutationError = null
+                showEditorDialog = true
+            },
+            onDelete = {
+                mutationError = null
+                showDeleteConfirm = true
+            }
+        )
+    } else {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onBack) {
+                            Icon(Lucide.ArrowLeft, contentDescription = "Back")
+                        }
+                        Text(
+                            text = if (targetUser != null) "@$targetUser Gists" else "Gists",
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (targetUser == null) {
+                            FilledTonalButton(
+                                onClick = {
+                                    editingDetail = null
+                                    mutationError = null
+                                    showEditorDialog = true
+                                }
+                            ) {
+                                Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("New")
+                            }
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        IconButton(onClick = { loadGists(forceRefresh = true) }) {
+                            Icon(Lucide.RefreshCw, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    if (targetUser == null) {
+                        Spacer(Modifier.height(6.dp))
+                        PrimaryTabRow(selectedTabIndex = activeTab.ordinal) {
+                            GistsTab.entries.forEach { tab ->
+                                Tab(
+                                    selected = activeTab == tab,
+                                    onClick = { activeTab = tab },
+                                    text = { Text(tab.label, maxLines = 1) }
+                                )
+                            }
+                        }
+                    }
+
+                    if (isLoading || isRefreshing) {
+                        Spacer(Modifier.height(6.dp))
+                        OctoWavyProgress()
+                    }
+                }
+            }
+
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { loadGists(forceRefresh = true) },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                val list = gists
+                when {
+                    isLoading && list == null -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            OctoLoadingState(message = "Loading gists...")
+                        }
+                    }
+                    errorMsg != null && list.isNullOrEmpty() -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(errorMsg!!, color = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.height(10.dp))
+                            FilledTonalButton(onClick = { loadGists(forceRefresh = true) }) { Text("Retry") }
+                        }
+                    }
+                    list.isNullOrEmpty() -> {
+                        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Lucide.FileCode, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("No gists found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(items = list, key = { it.id }) { summary ->
+                                GistSummaryCard(
+                                    gist = summary,
+                                    onClick = { openGist(summary) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showEditorDialog) {
+        val editing = editingDetail
+        val primaryFile = editing?.files?.firstOrNull()
+        GistEditorDialog(
+            isCreating = editing == null,
+            initialDescription = editing?.summary?.description.orEmpty(),
+            initialFilename = primaryFile?.filename ?: "snippet.txt",
+            initialContent = primaryFile?.content.orEmpty(),
+            initialPublic = editing?.summary?.isPublic ?: false,
+            isSubmitting = mutationBusy,
+            errorMsg = mutationError,
+            onDismiss = { if (!mutationBusy) showEditorDialog = false },
+            onSave = { desc, filename, content, isPublic ->
+                scope.launch {
+                    mutationBusy = true
+                    mutationError = null
+                    val result = if (editing == null) {
+                        container.repository.createGist(
+                            description = desc,
+                            isPublic = isPublic,
+                            files = mapOf(filename to content)
+                        )
+                    } else {
+                        val originalName = editing.files.firstOrNull()?.filename
+                        val updates = buildMap<String, String?> {
+                            if (originalName != null && originalName != filename) {
+                                put(originalName, null)
+                            }
+                            put(filename, content)
+                        }
+                        container.repository.updateGist(
+                            gistId = editing.summary.id,
+                            description = desc,
+                            updatedFiles = updates
+                        )
+                    }
+                    result.onSuccess { updated ->
+                        mutationBusy = false
+                        showEditorDialog = false
+                        selectedDetail = updated
+                        onMessage(if (editing == null) "Created gist" else "Updated gist")
+                        loadGists(forceRefresh = true)
+                    }.onFailure { err ->
+                        mutationBusy = false
+                        mutationError = err.message ?: "Failed to save gist"
+                    }
+                }
+            }
+        )
+    }
+
+    if (showDeleteConfirm && opened != null) {
+        AlertDialog(
+            onDismissRequest = { if (!mutationBusy) showDeleteConfirm = false },
+            title = { Text("Delete Gist") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Permanently delete this gist (${opened.files.firstOrNull()?.filename ?: opened.summary.id})?")
+                    if (!mutationError.isNullOrBlank()) {
+                        Text(mutationError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !mutationBusy,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    onClick = {
+                        scope.launch {
+                            mutationBusy = true
+                            mutationError = null
+                            container.repository.deleteGist(opened.summary.id)
+                                .onSuccess {
+                                    mutationBusy = false
+                                    showDeleteConfirm = false
+                                    selectedDetail = null
+                                    onMessage("Deleted gist")
+                                    loadGists(forceRefresh = true)
+                                }
+                                .onFailure { err ->
+                                    mutationBusy = false
+                                    mutationError = err.message ?: "Failed to delete gist"
+                                }
+                        }
+                    }
+                ) {
+                    Text(if (mutationBusy) "Deleting..." else "Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !mutationBusy, onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun GistSummaryCard(
+    gist: GistSummary,
+    onClick: () -> Unit
+) {
+    ElevatedCard(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (gist.ownerLogin.isNotBlank()) {
+                    UserAvatar(avatarUrl = gist.ownerAvatarUrl, login = gist.ownerLogin, sizeDp = 24)
+                }
+                val primaryName = gist.files.firstOrNull()?.filename ?: gist.id
+                Text(
+                    text = primaryName,
+                    style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                ExpressiveStatusPill(
+                    label = if (gist.isPublic) "Public" else "Secret",
+                    icon = if (gist.isPublic) Lucide.Globe else Lucide.Lock,
+                    containerColor = if (gist.isPublic) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHighest
+                    },
+                    contentColor = if (gist.isPublic) {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+            if (gist.description.isNotBlank()) {
+                Text(
+                    text = gist.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "${gist.files.size} file${if (gist.files.size == 1) "" else "s"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val lang = gist.files.firstOrNull()?.language
+                if (!lang.isNullOrBlank()) {
+                    Text(lang, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                if (gist.commentsCount > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Lucide.MessageSquare, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${gist.commentsCount}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GistDetailView(
+    detail: GistDetail,
+    isOwner: Boolean,
+    onBack: () -> Unit,
+    onToggleStar: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) {
+                        Icon(Lucide.ArrowLeft, contentDescription = "Back")
+                    }
+                    Text(
+                        text = detail.files.firstOrNull()?.filename ?: detail.summary.id,
+                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StarActionButton(isStarred = detail.viewerHasStarred, onClick = onToggleStar)
+                    if (isOwner) {
+                        IconButton(onClick = onEdit) {
+                            Icon(Lucide.Pencil, contentDescription = "Edit gist", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = onDelete) {
+                            Icon(
+                                Lucide.Trash2,
+                                contentDescription = "Delete gist",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    if (detail.summary.htmlUrl.isNotBlank()) {
+                        IconButton(onClick = { openUrlInBrowser(detail.summary.htmlUrl) }) {
+                            Icon(Lucide.ExternalLink, contentDescription = "Open in browser", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+                if (detail.summary.description.isNotBlank()) {
+                    Text(
+                        text = detail.summary.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(items = detail.files, key = { it.filename }) { file ->
+                ElevatedCard(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = file.filename,
+                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                                modifier = Modifier.weight(1f)
+                            )
+                            file.language?.takeIf { it.isNotBlank() }?.let { lang ->
+                                Text(
+                                    text = lang,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (file.filename.endsWith(".md", ignoreCase = true)) {
+                            GitHubMarkdown(file.content)
+                        } else {
+                            CodeViewer(
+                                code = file.content,
+                                filename = file.filename,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 420.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GistEditorDialog(
+    isCreating: Boolean,
+    initialDescription: String,
+    initialFilename: String,
+    initialContent: String,
+    initialPublic: Boolean,
+    isSubmitting: Boolean,
+    errorMsg: String?,
+    onDismiss: () -> Unit,
+    onSave: (description: String, filename: String, content: String, isPublic: Boolean) -> Unit
+) {
+    var description by remember(initialDescription) { mutableStateOf(initialDescription) }
+    var filename by remember(initialFilename) { mutableStateOf(initialFilename) }
+    var content by remember(initialContent) { mutableStateOf(initialContent) }
+    var isPublic by remember(initialPublic) { mutableStateOf(initialPublic) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isCreating) "New Gist" else "Edit Gist") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Description (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = filename,
+                    onValueChange = { filename = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Filename (e.g. notes.md)") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Contents") },
+                    minLines = 6,
+                    maxLines = 12,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (isCreating) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Public Gist", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = if (isPublic) "Visible to everyone" else "Secret (link only)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = isPublic, onCheckedChange = { isPublic = it }, enabled = !isSubmitting)
+                    }
+                }
+                if (!errorMsg.isNullOrBlank()) {
+                    Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !isSubmitting && filename.isNotBlank() && content.isNotBlank(),
+                onClick = { onSave(description, filename.trim(), content, isPublic) }
+            ) {
+                Text(if (isSubmitting) "Saving..." else if (isCreating) "Create Gist" else "Save")
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}

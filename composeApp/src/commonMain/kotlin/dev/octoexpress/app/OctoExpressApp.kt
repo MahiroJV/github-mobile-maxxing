@@ -47,6 +47,7 @@ import com.composables.icons.lucide.Inbox
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Settings
 import dev.octoexpress.app.notifications.PlatformNotifier
+import dev.octoexpress.app.ui.GistsScreen
 import dev.octoexpress.app.ui.HomeScreen
 import dev.octoexpress.app.ui.IssuePullDetailPane
 import dev.octoexpress.app.ui.IssuesPullsScreen
@@ -196,12 +197,14 @@ private fun MainAuthenticatedShell(
     var profileBackStack by remember { mutableStateOf<List<String>>(emptyList()) }
     var overlayRepo by remember { mutableStateOf<RepoSummary?>(null) }
     var overlayIssue by remember { mutableStateOf<IssuePullTarget?>(null) }
+    var overlayGistsUser by remember { mutableStateOf<String?>(null) }
     val unreadCount by container.unreadNotificationCount.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     val openUserProfile: (String) -> Unit = { targetLogin ->
         if (targetLogin.isNotBlank()) {
+            overlayGistsUser = null
             overlayRepo = null
             overlayIssue = null
             profileBackStack = profileBackStack + targetLogin
@@ -211,6 +214,7 @@ private fun MainAuthenticatedShell(
     LaunchedEffect(deepLinkTarget) {
         if (deepLinkTarget != null) {
             profileBackStack = emptyList()
+            overlayGistsUser = null
             overlayRepo = null
             overlayIssue = null
             currentDestination = AppDestination.INBOX
@@ -219,9 +223,10 @@ private fun MainAuthenticatedShell(
 
     // Android System Back pops profile/overlay stack or returns to Home tab before exiting app
     BackHandler(
-        enabled = overlayIssue != null || overlayRepo != null || profileBackStack.isNotEmpty() || currentDestination != AppDestination.HOME
+        enabled = overlayGistsUser != null || overlayIssue != null || overlayRepo != null || profileBackStack.isNotEmpty() || currentDestination != AppDestination.HOME
     ) {
         when {
+            overlayGistsUser != null -> overlayGistsUser = null
             overlayIssue != null -> overlayIssue = null
             overlayRepo != null -> overlayRepo = null
             profileBackStack.isNotEmpty() -> profileBackStack = profileBackStack.dropLast(1)
@@ -276,6 +281,12 @@ private fun MainAuthenticatedShell(
         ) { innerPadding ->
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                 when {
+                    overlayGistsUser != null -> GistsScreen(
+                        container = container,
+                        userLogin = overlayGistsUser?.takeIf { it.isNotBlank() },
+                        onBack = { overlayGistsUser = null },
+                        onMessage = showMessage
+                    )
                     overlayIssue != null -> IssuePullDetailPane(
                         target = overlayIssue!!,
                         container = container,
@@ -298,6 +309,7 @@ private fun MainAuthenticatedShell(
                         onOpenRepo = { overlayRepo = it },
                         onOpenIssueOrPull = { overlayIssue = it },
                         onOpenUser = { nextLogin -> profileBackStack = profileBackStack + nextLogin },
+                        onOpenGists = { targetUser -> overlayGistsUser = targetUser },
                         onMessage = showMessage
                     )
                     else -> when (currentDestination) {
@@ -307,6 +319,7 @@ private fun MainAuthenticatedShell(
                             onNavigateInbox = { currentDestination = AppDestination.INBOX },
                             onNavigateIssuesPrs = { currentDestination = AppDestination.ISSUES_PRS },
                             onNavigateRepos = { currentDestination = AppDestination.REPOS },
+                            onOpenGists = { overlayGistsUser = "" },
                             onOpenUser = openUserProfile,
                             onMessage = showMessage
                         )
