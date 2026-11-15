@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.BookMarked
+import com.composables.icons.lucide.Bookmark
 import com.composables.icons.lucide.CircleDot
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Flame
@@ -182,6 +183,7 @@ private fun HomeDashboardPane(
 ) {
     val profile by container.viewerProfile.collectAsState()
     val session by container.sessionManager.session.collectAsState()
+    val pinnedRepoNames by container.sessionManager.pinnedRepos.collectAsState()
     val login = profile?.login ?: session?.userLogin.orEmpty()
 
     var feedTab by remember { mutableStateOf(FeedTab.FOLLOWING) }
@@ -349,6 +351,55 @@ private fun HomeDashboardPane(
                     calendar?.let { cal ->
                         item(key = "contributions", contentType = "contribution_heatmap") {
                             ContributionHeatmapCard(calendar = cal)
+                        }
+                    }
+
+                    if (pinnedRepoNames.isNotEmpty()) {
+                        item(key = "pinned_repos_strip", contentType = "pinned_repos") {
+                            val repoByFullName = remember(recentRepos) {
+                                recentRepos.associateBy { it.fullName.lowercase() }
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = OctoFilledIcons.Bookmark,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "Pinned Bookmarks",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    pinnedRepoNames.forEach { fullName ->
+                                        val owner = fullName.substringBefore('/', "")
+                                        val name = fullName.substringAfter('/', fullName)
+                                        val summary = repoByFullName[fullName.lowercase()]
+                                        AssistChip(
+                                            onClick = { if (owner.isNotBlank()) onOpenRepo(owner, name) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = if (summary?.isPrivate == true) Lucide.Lock else Lucide.Bookmark,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(15.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            },
+                                            label = { Text(fullName, maxLines = 1) }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 

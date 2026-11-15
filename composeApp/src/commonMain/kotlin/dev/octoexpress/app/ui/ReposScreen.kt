@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.ArrowLeftRight
+import com.composables.icons.lucide.Bookmark
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
@@ -1057,6 +1058,8 @@ fun RepoDetailScreen(
 ) {
     val scope = rememberCoroutineScope()
     val viewerProfile by container.viewerProfile.collectAsState()
+    val pinnedRepos by container.sessionManager.pinnedRepos.collectAsState()
+    val isPinned = pinnedRepos.any { it.equals(repo.fullName, ignoreCase = true) }
     var detail by remember(repo.fullName) {
         mutableStateOf(container.repository.peekRepoDetail(repo.owner, repo.name))
     }
@@ -1615,6 +1618,21 @@ fun RepoDetailScreen(
                             .weight(1f)
                             .clickable(enabled = repo.owner.isNotBlank()) { onOpenUser(repo.owner) }
                     )
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                val nowPinned = container.sessionManager.togglePinnedRepo(repo.fullName)
+                                onMessage(if (nowPinned) "Pinned ${repo.fullName} to Home" else "Unpinned ${repo.fullName}")
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isPinned) OctoFilledIcons.Bookmark else Lucide.Bookmark,
+                            contentDescription = if (isPinned) "Unpin repository" else "Pin repository",
+                            tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     FilledTonalButton(
                         onClick = { showCreateIssueDialog = true },
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)

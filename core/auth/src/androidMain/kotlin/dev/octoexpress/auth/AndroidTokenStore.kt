@@ -122,6 +122,15 @@ private class AndroidKeystoreTokenStore(
         return runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
     }
 
+    override suspend fun savePinnedRepos(repos: List<String>) {
+        prefs.edit().putString(KEY_PINNED_REPOS, json.encodeToString(repos)).apply()
+    }
+
+    override suspend fun loadPinnedRepos(): List<String> {
+        val raw = prefs.getString(KEY_PINNED_REPOS, null) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<String>>(raw) }.getOrDefault(emptyList())
+    }
+
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "octoexpress_session_aes"
@@ -130,6 +139,7 @@ private class AndroidKeystoreTokenStore(
         private const val KEY_THEME_PREFS = "theme_prefs"
         private const val KEY_NOTIF_PREFS = "notif_prefs"
         private const val KEY_SEEN_NOTIFS = "seen_notifs"
+        private const val KEY_PINNED_REPOS = "pinned_repos"
     }
 }
 

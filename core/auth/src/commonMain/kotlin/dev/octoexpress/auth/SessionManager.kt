@@ -25,6 +25,9 @@ class SessionManager(
     private val _notificationPreferences = MutableStateFlow(NotificationPreferences())
     val notificationPreferences: StateFlow<NotificationPreferences> = _notificationPreferences.asStateFlow()
 
+    private val _pinnedRepos = MutableStateFlow<List<String>>(emptyList())
+    val pinnedRepos: StateFlow<List<String>> = _pinnedRepos.asStateFlow()
+
     private val _isInitialized = MutableStateFlow(false)
     val isInitialized: StateFlow<Boolean> = _isInitialized.asStateFlow()
 
@@ -35,6 +38,10 @@ class SessionManager(
         }
         _themePreferences.value = tokenStore.loadThemePreferences()
         _notificationPreferences.value = tokenStore.loadNotificationPreferences()
+        _pinnedRepos.value = tokenStore.loadPinnedRepos()
+            .map { it.trim() }
+            .filter { '/' in it }
+            .distinct()
         _session.value = tokenStore.loadSession()
         _isInitialized.value = true
     }
@@ -83,9 +90,30 @@ class SessionManager(
         tokenStore.saveSeenNotificationMarkers(markers)
     }
 
+    suspend fun togglePinnedRepo(fullName: String): Boolean {
+        val normalized = fullName.trim()
+        if ('/' !in normalized) return false
+        val current = _pinnedRepos.value
+        val existingIdx = current.indexOfFirst { it.equals(normalized, ignoreCase = true) }
+        val next: List<String>
+        val nowPinned: Boolean
+        if (existingIdx >= 0) {
+            next = current.toMutableList().apply { removeAt(existingIdx) }
+            nowPinned = false
+        } else {
+            next = (listOf(normalized) + current).take(24)
+            nowPinned = true
+        }
+        _pinnedRepos.value = next
+        tokenStore.savePinnedRepos(next)
+        return nowPinned
+    }
+
     suspend fun signOut() {
         tokenStore.clearSession()
         tokenStore.saveSeenNotificationMarkers(emptyMap())
+        tokenStore.savePinnedRepos(emptyList())
+        _pinnedRepos.value = emptyList()
         _session.value = null
     }
 }

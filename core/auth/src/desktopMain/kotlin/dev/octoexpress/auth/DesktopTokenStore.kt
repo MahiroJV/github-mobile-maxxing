@@ -26,6 +26,7 @@ private class LinuxDesktopTokenStore : TokenStore {
     private val themeFile: File by lazy { File(dataDir, "theme.json") }
     private val notifPrefsFile: File by lazy { File(dataDir, "notif_prefs.json") }
     private val seenNotifsFile: File by lazy { File(dataDir, "seen_notifs.json") }
+    private val pinnedReposFile: File by lazy { File(dataDir, "pinned_repos.json") }
 
     override suspend fun saveSession(session: AuthSession) = withContext(Dispatchers.IO) {
         val encoded = json.encodeToString(session)
@@ -90,6 +91,16 @@ private class LinuxDesktopTokenStore : TokenStore {
         if (!seenNotifsFile.exists()) return@withContext emptyMap()
         runCatching { json.decodeFromString<Map<String, String>>(seenNotifsFile.readText()) }
             .getOrDefault(emptyMap())
+    }
+
+    override suspend fun savePinnedRepos(repos: List<String>) = withContext(Dispatchers.IO) {
+        pinnedReposFile.writeText(json.encodeToString(repos))
+    }
+
+    override suspend fun loadPinnedRepos(): List<String> = withContext(Dispatchers.IO) {
+        if (!pinnedReposFile.exists()) return@withContext emptyList()
+        runCatching { json.decodeFromString<List<String>>(pinnedReposFile.readText()) }
+            .getOrDefault(emptyList())
     }
 
     private fun restrictPermissions(file: File) {

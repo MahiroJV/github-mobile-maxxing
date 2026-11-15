@@ -29,6 +29,8 @@ interface TokenStore {
     suspend fun loadNotificationPreferences(): NotificationPreferences
     suspend fun saveSeenNotificationMarkers(markers: Map<String, String>)
     suspend fun loadSeenNotificationMarkers(): Map<String, String>
+    suspend fun savePinnedRepos(repos: List<String>) {}
+    suspend fun loadPinnedRepos(): List<String> = emptyList()
 }
 
 expect fun createPlatformTokenStore(): TokenStore
