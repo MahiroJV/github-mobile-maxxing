@@ -1,5 +1,6 @@
 package dev.octoexpress.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -49,7 +53,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.BellOff
@@ -111,6 +119,9 @@ fun NotificationsScreen(
     var filter by remember { mutableStateOf(InboxFilter.UNREAD) }
     var reasonFilter by remember { mutableStateOf(ReasonFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
+    var isFilterInputActive by remember { mutableStateOf(false) }
+    val filterFocusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     val liveUnread by container.unreadThreads.collectAsState()
     var threads by remember {
         mutableStateOf(
@@ -123,9 +134,21 @@ fun NotificationsScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    // Android System Back from Detail pane back to Inbox list
-    BackHandler(enabled = navigator.canNavigateBack()) {
-        scope.launch { navigator.navigateBack() }
+    LaunchedEffect(isFilterInputActive) {
+        if (isFilterInputActive) {
+            filterFocusRequester.requestFocus()
+        }
+    }
+
+    // Android System Back closes active filter input first, or returns from Detail pane
+    BackHandler(enabled = isFilterInputActive || navigator.canNavigateBack()) {
+        when {
+            isFilterInputActive -> {
+                focusManager.clearFocus()
+                isFilterInputActive = false
+            }
+            navigator.canNavigateBack() -> scope.launch { navigator.navigateBack() }
+        }
     }
 
     LaunchedEffect(deepLinkTarget) {
@@ -299,21 +322,64 @@ fun NotificationsScreen(
                             }
 
                             Spacer(Modifier.height(6.dp))
-                            OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                placeholder = { Text("Filter by repo or title...") },
-                                leadingIcon = { Icon(Lucide.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                trailingIcon = if (searchQuery.isNotEmpty()) {
-                                    {
-                                        IconButton(onClick = { searchQuery = "" }) {
+                            if (!isFilterInputActive && searchQuery.isEmpty()) {
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp)
+                                        .clickable { isFilterInputActive = true }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Icon(
+                                            Lucide.Search,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "Filter by repo or title...",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            } else {
+                                OutlinedTextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    placeholder = { Text("Filter by repo or title...") },
+                                    leadingIcon = { Icon(Lucide.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = {
+                                                searchQuery = ""
+                                                focusManager.clearFocus()
+                                                isFilterInputActive = false
+                                            }
+                                        ) {
                                             Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
                                         }
-                                    }
-                                } else null,
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                    keyboardActions = KeyboardActions(
+                                        onSearch = {
+                                            focusManager.clearFocus()
+                                            if (searchQuery.isEmpty()) isFilterInputActive = false
+                                        }
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .focusRequester(filterFocusRequester)
+                                )
+                            }
 
                             if ((isLoading || isRefreshing) && threads.isNotEmpty()) {
                                 Spacer(Modifier.height(8.dp))

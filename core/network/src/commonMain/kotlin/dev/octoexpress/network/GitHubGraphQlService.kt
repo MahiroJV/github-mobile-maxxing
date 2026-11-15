@@ -27,8 +27,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
@@ -89,7 +87,7 @@ class GitHubGraphQlService(
             }
             """.trimIndent()
         )
-        val v = data["viewer"]!!.jsonObject
+        val v = data.obj("viewer") ?: throw GitHubApiException(500, "Missing viewer in GraphQL response")
         return ViewerProfile(
             login = v.str("login") ?: "",
             name = v.str("name"),
@@ -97,9 +95,9 @@ class GitHubGraphQlService(
             bio = v.str("bio"),
             company = v.str("company"),
             location = v.str("location"),
-            followersCount = v["followers"]?.jsonObject?.int("totalCount") ?: 0,
-            followingCount = v["following"]?.jsonObject?.int("totalCount") ?: 0,
-            publicReposCount = v["repositories"]?.jsonObject?.int("totalCount") ?: 0,
+            followersCount = v.obj("followers")?.int("totalCount") ?: 0,
+            followingCount = v.obj("following")?.int("totalCount") ?: 0,
+            publicReposCount = v.obj("repositories")?.int("totalCount") ?: 0,
             htmlUrl = v.str("url") ?: ""
         )
     }
@@ -168,19 +166,19 @@ class GitHubGraphQlService(
             variables = mapOf("q" to searchQuery)
         )
 
-        val nodes = data["search"]?.jsonObject?.get("nodes")?.jsonArray ?: return emptyList()
+        val nodes = data.obj("search")?.arr("nodes") ?: return emptyList()
         return nodes.mapNotNull { element ->
             val obj = element as? JsonObject ?: return@mapNotNull null
             val typeName = obj.str("__typename") ?: return@mapNotNull null
             if (typeName != "Issue" && typeName != "PullRequest") return@mapNotNull null
-            val repoObj = obj["repository"]?.jsonObject ?: return@mapNotNull null
-            val authorObj = obj["author"]?.jsonObject
+            val repoObj = obj.obj("repository") ?: return@mapNotNull null
+            val authorObj = obj.obj("author")
             val stateStr = obj.str("state") ?: "OPEN"
-            val statusState = obj["commits"]?.jsonObject
-                ?.get("nodes")?.jsonArray
-                ?.firstOrNull()?.jsonObject
-                ?.get("commit")?.jsonObject
-                ?.get("statusCheckRollup")?.jsonObject
+            val statusState = (obj.obj("commits")
+                ?.arr("nodes")
+                ?.firstOrNull() as? JsonObject)
+                ?.obj("commit")
+                ?.obj("statusCheckRollup")
                 ?.str("state")
 
             IssueOrPullSummary(
@@ -191,17 +189,13 @@ class GitHubGraphQlService(
                 state = parseState(stateStr),
                 isDraft = obj.bool("isDraft") ?: false,
                 repoFullName = repoObj.str("nameWithOwner") ?: "",
-                repoOwner = repoObj["owner"]?.jsonObject?.str("login") ?: "",
+                repoOwner = repoObj.obj("owner")?.str("login") ?: "",
                 repoName = repoObj.str("name") ?: "",
-                author = UserSummary(
-                    login = authorObj?.str("login") ?: "ghost",
-                    avatarUrl = authorObj?.str("avatarUrl") ?: "",
-                    htmlUrl = authorObj?.str("url") ?: ""
-                ),
+                author = parseUser(authorObj),
                 createdAt = obj.str("createdAt") ?: "",
                 updatedAt = obj.str("updatedAt") ?: "",
-                commentCount = obj["comments"]?.jsonObject?.int("totalCount") ?: 0,
-                labels = parseLabels(obj["labels"]?.jsonObject?.get("nodes")?.jsonArray),
+                commentCount = obj.obj("comments")?.int("totalCount") ?: 0,
+                labels = parseLabels(obj.obj("labels")?.arr("nodes")),
                 checkRollup = statusState?.let { CheckRollupSummary(state = it) },
                 reviewDecision = obj.str("reviewDecision")
             )
@@ -331,70 +325,70 @@ class GitHubGraphQlService(
         """.trimIndent()
 
         val data = execute(query)
-        val item = data["repository"]?.jsonObject?.get("issueOrPullRequest")?.jsonObject
+        val item = data.obj("repository")?.obj("issueOrPullRequest")
             ?: throw GitHubApiException(404, "Issue or PR #$number not found in $owner/$repo")
 
         val typeName = item.str("__typename") ?: "Issue"
         val isPr = typeName == "PullRequest"
-        val authorObj = item["author"]?.jsonObject
-        val statusState = item["commits"]?.jsonObject
-            ?.get("nodes")?.jsonArray
-            ?.firstOrNull()?.jsonObject
-            ?.get("commit")?.jsonObject
-            ?.get("statusCheckRollup")?.jsonObject
+        val authorObj = item.obj("author")
+        val statusState = (item.obj("commits")
+            ?.arr("nodes")
+            ?.firstOrNull() as? JsonObject)
+            ?.obj("commit")
+            ?.obj("statusCheckRollup")
             ?.str("state")
 
-        val timelineNodes = item["timelineItems"]?.jsonObject?.get("nodes")?.jsonArray ?: JsonArray(emptyList())
+        val timelineNodes = item.obj("timelineItems")?.arr("nodes") ?: JsonArray(emptyList())
         val timeline = timelineNodes.mapNotNull { el ->
             val obj = el as? JsonObject ?: return@mapNotNull null
             when (obj.str("__typename")) {
                 "IssueComment" -> TimelineEvent.CommentEvent(
                     id = obj.str("id") ?: "",
                     createdAt = obj.str("createdAt") ?: "",
-                    author = parseUser(obj["author"]?.jsonObject),
+                    author = parseUser(obj.obj("author")),
                     body = obj.str("body") ?: "",
                     authorAssociation = obj.str("authorAssociation")
                 )
                 "PullRequestReview" -> TimelineEvent.ReviewEventItem(
                     id = obj.str("id") ?: "",
                     createdAt = obj.str("createdAt") ?: "",
-                    author = parseUser(obj["author"]?.jsonObject),
+                    author = parseUser(obj.obj("author")),
                     state = obj.str("state") ?: "COMMENTED",
                     body = obj.str("body") ?: ""
                 )
                 "PullRequestCommit" -> {
-                    val commit = obj["commit"]?.jsonObject
+                    val commit = obj.obj("commit")
                     TimelineEvent.CommitEvent(
                         id = obj.str("id") ?: "",
                         createdAt = commit?.str("committedDate") ?: "",
                         oidShort = commit?.str("abbreviatedOid") ?: "",
                         messageHeadline = commit?.str("messageHeadline") ?: "",
-                        authorName = commit?.get("author")?.jsonObject?.str("name") ?: ""
+                        authorName = commit?.obj("author")?.str("name") ?: ""
                     )
                 }
                 "MergedEvent" -> TimelineEvent.StateChangeEvent(
                     id = obj.str("id") ?: "",
                     createdAt = obj.str("createdAt") ?: "",
-                    actor = obj["actor"]?.jsonObject?.let { parseUser(it) },
+                    actor = parseUser(obj.obj("actor")),
                     actionLabel = "merged into ${obj.str("mergeRefName") ?: "base"}"
                 )
                 "ClosedEvent" -> TimelineEvent.StateChangeEvent(
                     id = obj.str("id") ?: "",
                     createdAt = obj.str("createdAt") ?: "",
-                    actor = obj["actor"]?.jsonObject?.let { parseUser(it) },
+                    actor = parseUser(obj.obj("actor")),
                     actionLabel = "closed this"
                 )
                 "ReopenedEvent" -> TimelineEvent.StateChangeEvent(
                     id = obj.str("id") ?: "",
                     createdAt = obj.str("createdAt") ?: "",
-                    actor = obj["actor"]?.jsonObject?.let { parseUser(it) },
+                    actor = parseUser(obj.obj("actor")),
                     actionLabel = "reopened this"
                 )
                 else -> null
             }
         }
 
-        val assignees = item["assignees"]?.jsonObject?.get("nodes")?.jsonArray
+        val assignees = item.obj("assignees")?.arr("nodes")
             ?.mapNotNull { (it as? JsonObject)?.let(::parseUser) } ?: emptyList()
 
         return IssueOrPullDetail(
@@ -411,7 +405,7 @@ class GitHubGraphQlService(
             author = parseUser(authorObj),
             createdAt = item.str("createdAt") ?: "",
             updatedAt = item.str("updatedAt") ?: "",
-            labels = parseLabels(item["labels"]?.jsonObject?.get("nodes")?.jsonArray),
+            labels = parseLabels(item.obj("labels")?.arr("nodes")),
             assignees = assignees,
             headRefName = item.str("headRefName"),
             baseRefName = item.str("baseRefName"),
@@ -438,7 +432,7 @@ class GitHubGraphQlService(
             }
             """.trimIndent()
         )
-        val nodes = data["viewer"]?.jsonObject?.get("repositories")?.jsonObject?.get("nodes")?.jsonArray
+        val nodes = data.obj("viewer")?.obj("repositories")?.arr("nodes")
             ?: return emptyList()
         return nodes.mapNotNull { (it as? JsonObject)?.let(::parseRepoSummary) }
     }
@@ -455,7 +449,7 @@ class GitHubGraphQlService(
             }
             """.trimIndent()
         )
-        val nodes = data["viewer"]?.jsonObject?.get("starredRepositories")?.jsonObject?.get("nodes")?.jsonArray
+        val nodes = data.obj("viewer")?.obj("starredRepositories")?.arr("nodes")
             ?: return emptyList()
         return nodes.mapNotNull { (it as? JsonObject)?.let(::parseRepoSummary) }
     }
@@ -473,8 +467,12 @@ class GitHubGraphQlService(
             """.trimIndent(),
             variables = mapOf("q" to query)
         )
-        val nodes = data["search"]?.jsonObject?.get("nodes")?.jsonArray ?: return emptyList()
-        return nodes.mapNotNull { (it as? JsonObject)?.let(::parseRepoSummary) }
+        val nodes = data.obj("search")?.arr("nodes") ?: return emptyList()
+        return nodes.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            if (obj.str("nameWithOwner").isNullOrBlank()) return@mapNotNull null
+            parseRepoSummary(obj)
+        }
     }
 
     suspend fun fetchRepoDetail(owner: String, name: String): RepoDetail {
@@ -493,17 +491,17 @@ class GitHubGraphQlService(
             }
             """.trimIndent()
         )
-        val repoObj = data["repository"]?.jsonObject
+        val repoObj = data.obj("repository")
             ?: throw GitHubApiException(404, "Repository $owner/$name not found")
-        val topics = repoObj["repositoryTopics"]?.jsonObject?.get("nodes")?.jsonArray
-            ?.mapNotNull { it.jsonObject["topic"]?.jsonObject?.str("name") } ?: emptyList()
+        val topics = repoObj.obj("repositoryTopics")?.arr("nodes")
+            ?.mapNotNull { (it as? JsonObject)?.obj("topic")?.str("name") } ?: emptyList()
 
         return RepoDetail(
             summary = parseRepoSummary(repoObj),
             homepageUrl = repoObj.str("homepageUrl"),
-            licenseName = repoObj["licenseInfo"]?.jsonObject?.str("name"),
+            licenseName = repoObj.obj("licenseInfo")?.str("name"),
             topics = topics,
-            watchersCount = repoObj["watchers"]?.jsonObject?.int("totalCount") ?: 0
+            watchersCount = repoObj.obj("watchers")?.int("totalCount") ?: 0
         )
     }
 
@@ -541,7 +539,7 @@ class GitHubGraphQlService(
             }
             """.trimIndent()
         )
-        val nodes = data["repository"]?.jsonObject?.get(field)?.jsonObject?.get("nodes")?.jsonArray
+        val nodes = data.obj("repository")?.obj(field)?.arr("nodes")
             ?: return emptyList()
         return nodes.mapNotNull { el ->
             val obj = el as? JsonObject ?: return@mapNotNull null
@@ -555,20 +553,20 @@ class GitHubGraphQlService(
                 repoFullName = "$owner/$name",
                 repoOwner = owner,
                 repoName = name,
-                author = parseUser(obj["author"]?.jsonObject),
+                author = parseUser(obj.obj("author")),
                 createdAt = obj.str("createdAt") ?: "",
                 updatedAt = obj.str("updatedAt") ?: "",
-                commentCount = obj["comments"]?.jsonObject?.int("totalCount") ?: 0,
-                labels = parseLabels(obj["labels"]?.jsonObject?.get("nodes")?.jsonArray),
+                commentCount = obj.obj("comments")?.int("totalCount") ?: 0,
+                labels = parseLabels(obj.obj("labels")?.arr("nodes")),
                 reviewDecision = obj.str("reviewDecision")
             )
         }
     }
 
     private fun parseRepoSummary(obj: JsonObject): RepoSummary {
-        val ownerObj = obj["owner"]?.jsonObject
-        val langObj = obj["primaryLanguage"]?.jsonObject
-        val defaultBranch = obj["defaultBranchRef"]?.jsonObject?.str("name") ?: "main"
+        val ownerObj = obj.obj("owner")
+        val langObj = obj.obj("primaryLanguage")
+        val defaultBranch = obj.obj("defaultBranchRef")?.str("name") ?: "main"
         return RepoSummary(
             id = obj.str("id") ?: "",
             name = obj.str("name") ?: "",
@@ -579,7 +577,7 @@ class GitHubGraphQlService(
             languageColorHex = langObj?.str("color"),
             stargazersCount = obj.int("stargazerCount") ?: 0,
             forksCount = obj.int("forkCount") ?: 0,
-            openIssuesCount = obj["issues"]?.jsonObject?.int("totalCount") ?: 0,
+            openIssuesCount = obj.obj("issues")?.int("totalCount") ?: 0,
             isPrivate = obj.bool("isPrivate") ?: false,
             isFork = obj.bool("isFork") ?: false,
             defaultBranch = defaultBranch,
@@ -613,13 +611,17 @@ class GitHubGraphQlService(
         else -> IssueOrPullState.OPEN
     }
 
-    private fun JsonObject.str(key: String): String? =
+    internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
+
+    internal fun JsonObject.arr(key: String): JsonArray? = this[key] as? JsonArray
+
+    internal fun JsonObject.str(key: String): String? =
         this[key]?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.contentOrNull }
 
-    private fun JsonObject.int(key: String): Int? =
+    internal fun JsonObject.int(key: String): Int? =
         this[key]?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.intOrNull }
 
-    private fun JsonObject.bool(key: String): Boolean? =
+    internal fun JsonObject.bool(key: String): Boolean? =
         this[key]?.let { if (it is kotlinx.serialization.json.JsonNull) null else it.jsonPrimitive.booleanOrNull }
 
     companion object {

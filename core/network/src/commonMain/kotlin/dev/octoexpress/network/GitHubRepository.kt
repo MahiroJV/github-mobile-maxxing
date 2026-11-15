@@ -159,6 +159,8 @@ class GitHubRepository(
 
     fun peekStarredRepositories(): List<RepoSummary>? = viewerReposCache.peek("STARRED")
 
+    fun peekSearchRepositories(query: String): List<RepoSummary>? = searchReposCache.peek(query.trim())
+
     fun peekRepoDetail(owner: String, repo: String): RepoDetail? = repoDetailCache.peek(RepoKey(owner, repo))
 
     fun peekRepoIssuesOrPulls(
@@ -348,7 +350,11 @@ class GitHubRepository(
             viewerReposCache.peekIfFresh("MY")?.let { return Result.success(it) }
         }
         return runCatching {
-            graphQlService.fetchViewerRepositories()
+            try {
+                graphQlService.fetchViewerRepositories()
+            } catch (_: Exception) {
+                restService.fetchViewerRepositoriesRest()
+            }
         }.onSuccess {
             viewerReposCache.put("MY", it)
         }
@@ -359,7 +365,11 @@ class GitHubRepository(
             viewerReposCache.peekIfFresh("STARRED")?.let { return Result.success(it) }
         }
         return runCatching {
-            graphQlService.fetchStarredRepositories()
+            try {
+                graphQlService.fetchStarredRepositories()
+            } catch (_: Exception) {
+                restService.fetchStarredRepositoriesRest()
+            }
         }.onSuccess {
             viewerReposCache.put("STARRED", it)
         }
@@ -367,11 +377,16 @@ class GitHubRepository(
 
     suspend fun searchRepositories(query: String, forceRefresh: Boolean = false): Result<List<RepoSummary>> {
         val trimmed = query.trim()
+        if (trimmed.isEmpty()) return Result.success(emptyList())
         if (!forceRefresh) {
             searchReposCache.peekIfFresh(trimmed)?.let { return Result.success(it) }
         }
         return runCatching {
-            graphQlService.searchRepositories(trimmed)
+            try {
+                graphQlService.searchRepositories(trimmed)
+            } catch (_: Exception) {
+                restService.searchRepositoriesRest(trimmed)
+            }
         }.onSuccess {
             searchReposCache.put(trimmed, it)
         }

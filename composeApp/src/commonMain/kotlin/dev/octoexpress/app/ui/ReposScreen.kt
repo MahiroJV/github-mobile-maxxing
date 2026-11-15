@@ -20,6 +20,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -52,7 +54,14 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeft
@@ -69,6 +78,7 @@ import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Star
+import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
 import dev.octoexpress.model.FileContent
@@ -154,38 +164,51 @@ private fun RepoListPane(
 ) {
     var activeTab by remember { mutableStateOf(RepoListTab.MINE) }
     var searchQuery by remember { mutableStateOf("") }
+    var submittedSearchQuery by remember { mutableStateOf("") }
     var repos by remember {
         mutableStateOf(container.repository.peekViewerRepositories().orEmpty())
     }
     var isLoading by remember { mutableStateOf(repos.isEmpty()) }
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var requestSeq by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
-    fun loadRepos(forceRefresh: Boolean = false) {
+    fun loadRepos(forceRefresh: Boolean = false, targetTab: RepoListTab = activeTab) {
+        val currentSeq = ++requestSeq
+        val trimmedQuery = searchQuery.trim()
+        if (targetTab == RepoListTab.SEARCH) {
+            submittedSearchQuery = trimmedQuery
+            if (trimmedQuery.isEmpty()) {
+                repos = emptyList()
+                isLoading = false
+                isRefreshing = false
+                errorMsg = null
+                return
+            }
+        }
         scope.launch {
-            val cached = when (activeTab) {
+            val cached = when (targetTab) {
                 RepoListTab.MINE -> container.repository.peekViewerRepositories()
                 RepoListTab.STARRED -> container.repository.peekStarredRepositories()
-                RepoListTab.SEARCH -> null
+                RepoListTab.SEARCH -> container.repository.peekSearchRepositories(trimmedQuery)
             }
             if (cached != null) {
                 repos = cached
                 isLoading = false
             } else {
+                repos = emptyList()
                 isLoading = true
             }
             if (forceRefresh) isRefreshing = true
             errorMsg = null
-            val res = when (activeTab) {
+            val res = when (targetTab) {
                 RepoListTab.MINE -> container.repository.getViewerRepositories(forceRefresh = forceRefresh)
                 RepoListTab.STARRED -> container.repository.getStarredRepositories(forceRefresh = forceRefresh)
-                RepoListTab.SEARCH -> {
-                    val q = searchQuery.trim()
-                    if (q.isEmpty()) Result.success(emptyList())
-                    else container.repository.searchRepositories(q, forceRefresh = forceRefresh)
-                }
+                RepoListTab.SEARCH -> container.repository.searchRepositories(trimmedQuery, forceRefresh = forceRefresh)
             }
+            if (requestSeq != currentSeq || activeTab != targetTab) return@launch
             res.onSuccess {
                 repos = it
                 isLoading = false
@@ -199,11 +222,16 @@ private fun RepoListPane(
     }
 
     LaunchedEffect(activeTab) {
-        if (activeTab != RepoListTab.SEARCH || searchQuery.isNotBlank()) {
-            loadRepos(forceRefresh = false)
+        if (activeTab != RepoListTab.SEARCH) {
+            loadRepos(forceRefresh = false, targetTab = activeTab)
+        } else if (searchQuery.isNotBlank()) {
+            loadRepos(forceRefresh = false, targetTab = RepoListTab.SEARCH)
         } else {
+            requestSeq++
             repos = emptyList()
+            errorMsg = null
             isLoading = false
+            isRefreshing = false
         }
     }
 
@@ -239,13 +267,51 @@ private fun RepoListPane(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search GitHub repositories (e.g. compose multiplatform)") },
+                        placeholder = { Text("Search GitHub repositories...") },
                         leadingIcon = { Icon(Lucide.Search, contentDescription = null) },
+                        trailingIcon = if (searchQuery.isNotEmpty()) {
+                            {
+                                IconButton(
+                                    onClick = {
+                                        searchQuery = ""
+                                        submittedSearchQuery = ""
+                                        repos = emptyList()
+                                        errorMsg = null
+                                    }
+                                ) {
+                                    Icon(Lucide.X, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        } else null,
                         singleLine = true,
-                        modifier = Modifier.weight(1f)
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                focusManager.clearFocus()
+                                if (searchQuery.isNotBlank()) {
+                                    loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
+                                }
+                            }
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                                    focusManager.clearFocus()
+                                    if (searchQuery.isNotBlank()) {
+                                        loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
+                                    }
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                     )
                     Button(
-                        onClick = { loadRepos(forceRefresh = true) },
+                        onClick = {
+                            focusManager.clearFocus()
+                            loadRepos(forceRefresh = true, targetTab = RepoListTab.SEARCH)
+                        },
                         enabled = searchQuery.isNotBlank()
                     ) {
                         Text("Search")
@@ -271,15 +337,31 @@ private fun RepoListPane(
                 }
 
                 errorMsg != null && repos.isEmpty() -> {
-                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
                         Text(errorMsg!!, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = { loadRepos(forceRefresh = true) }) {
+                            Text("Retry")
+                        }
                     }
                 }
 
                 repos.isEmpty() -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            text = if (activeTab == RepoListTab.SEARCH) "Enter a query to search repositories." else "No repositories found.",
+                            text = when (activeTab) {
+                                RepoListTab.SEARCH -> if (submittedSearchQuery.isBlank()) {
+                                    "Enter a query to search repositories."
+                                } else {
+                                    "No repositories matched \"$submittedSearchQuery\"."
+                                }
+                                RepoListTab.STARRED -> "No starred repositories found."
+                                RepoListTab.MINE -> "No repositories found."
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }

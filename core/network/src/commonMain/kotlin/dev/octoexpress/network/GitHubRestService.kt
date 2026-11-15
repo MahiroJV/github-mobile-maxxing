@@ -8,6 +8,7 @@ import dev.octoexpress.model.NotificationReason
 import dev.octoexpress.model.NotificationSubjectType
 import dev.octoexpress.model.NotificationThread
 import dev.octoexpress.model.PullFileChange
+import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
@@ -114,6 +115,54 @@ private data class SubmitReviewRequest(val event: String, val body: String = "")
 private data class MergePullRequest(
     @SerialName("merge_method") val mergeMethod: String,
     @SerialName("commit_title") val commitTitle: String? = null
+)
+
+@Serializable
+private data class RestRepoOwnerDto(
+    val login: String,
+    @SerialName("avatar_url") val avatarUrl: String = ""
+)
+
+@Serializable
+private data class RestRepoDto(
+    @SerialName("node_id") val nodeId: String = "",
+    val id: Long = 0L,
+    val name: String,
+    @SerialName("full_name") val fullName: String,
+    val description: String? = null,
+    val language: String? = null,
+    @SerialName("stargazers_count") val stargazersCount: Int = 0,
+    @SerialName("forks_count") val forksCount: Int = 0,
+    @SerialName("open_issues_count") val openIssuesCount: Int = 0,
+    val private: Boolean = false,
+    val fork: Boolean = false,
+    @SerialName("default_branch") val defaultBranch: String = "main",
+    @SerialName("updated_at") val updatedAt: String = "",
+    val owner: RestRepoOwnerDto? = null
+) {
+    fun toRepoSummary(viewerHasStarred: Boolean = false): RepoSummary = RepoSummary(
+        id = nodeId.ifBlank { "rest_$id" },
+        name = name,
+        owner = owner?.login ?: fullName.substringBefore('/'),
+        fullName = fullName,
+        description = description,
+        language = language,
+        languageColorHex = null,
+        stargazersCount = stargazersCount,
+        forksCount = forksCount,
+        openIssuesCount = openIssuesCount,
+        isPrivate = private,
+        isFork = fork,
+        defaultBranch = defaultBranch.ifBlank { "main" },
+        updatedAt = updatedAt,
+        ownerAvatarUrl = owner?.avatarUrl.orEmpty(),
+        viewerHasStarred = viewerHasStarred
+    )
+}
+
+@Serializable
+private data class RestRepoSearchResponse(
+    val items: List<RestRepoDto> = emptyList()
 )
 
 class GitHubRestService(
@@ -373,6 +422,43 @@ class GitHubRestService(
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to update star (${res.status.value})")
         }
+    }
+
+    suspend fun fetchViewerRepositoriesRest(perPage: Int = 40): List<RepoSummary> {
+        val res = httpClient.get("$baseUrl/user/repos") {
+            parameter("sort", "updated")
+            parameter("direction", "desc")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load repositories (${res.status.value})")
+        }
+        return res.body<List<RestRepoDto>>().map { it.toRepoSummary() }
+    }
+
+    suspend fun fetchStarredRepositoriesRest(perPage: Int = 40): List<RepoSummary> {
+        val res = httpClient.get("$baseUrl/user/starred") {
+            parameter("sort", "created")
+            parameter("direction", "desc")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load starred repositories (${res.status.value})")
+        }
+        return res.body<List<RestRepoDto>>().map { it.toRepoSummary(viewerHasStarred = true) }
+    }
+
+    suspend fun searchRepositoriesRest(query: String, perPage: Int = 30): List<RepoSummary> {
+        val res = httpClient.get("$baseUrl/search/repositories") {
+            parameter("q", query)
+            parameter("sort", "stars")
+            parameter("order", "desc")
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Repository search failed (${res.status.value})")
+        }
+        return res.body<RestRepoSearchResponse>().items.map { it.toRepoSummary() }
     }
 
     private fun parseReason(raw: String): NotificationReason = when (raw.lowercase()) {

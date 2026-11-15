@@ -1,5 +1,11 @@
 package dev.octoexpress.network
 
+import dev.octoexpress.auth.DeviceFlowClient
+import dev.octoexpress.auth.NotificationPreferences
+import dev.octoexpress.auth.SessionManager
+import dev.octoexpress.auth.ThemePreferences
+import dev.octoexpress.auth.TokenStore
+import dev.octoexpress.model.AuthSession
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullKind
 import dev.octoexpress.model.IssueOrPullState
@@ -163,5 +169,182 @@ class GitHubServicesTest {
         assertEquals(128, items[0].number)
         assertEquals("SUCCESS", items[0].checkRollup?.state)
         assertEquals("enhancement", items[0].labels.first().name)
+    }
+
+    @Test
+    fun graphQlHandlesNullLanguageDefaultBranchAndSearchNodesSafely() = runTest {
+        val engine = MockEngine { request ->
+            val body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            val payload = if (body.contains("starredRepositories")) {
+                """
+                {
+                  "data": {
+                    "viewer": {
+                      "starredRepositories": {
+                        "nodes": [
+                          null,
+                          {
+                            "id": "R_dot",
+                            "name": "dotfiles",
+                            "nameWithOwner": "octo/dotfiles",
+                            "description": null,
+                            "isPrivate": false,
+                            "isFork": false,
+                            "stargazerCount": 42,
+                            "forkCount": 3,
+                            "updatedAt": "2026-11-15T00:00:00Z",
+                            "viewerHasStarred": true,
+                            "owner": { "login": "octo", "avatarUrl": "https://example.com/o.png" },
+                            "primaryLanguage": null,
+                            "defaultBranchRef": null,
+                            "issues": { "totalCount": 0 }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+                """.trimIndent()
+            } else {
+                """
+                {
+                  "data": {
+                    "search": {
+                      "nodes": [
+                        {},
+                        {
+                          "id": "R_kmp",
+                          "name": "kmp-notes",
+                          "nameWithOwner": "dev/kmp-notes",
+                          "description": "Notes",
+                          "isPrivate": false,
+                          "isFork": false,
+                          "stargazerCount": 900,
+                          "forkCount": 12,
+                          "updatedAt": "2026-11-15T01:00:00Z",
+                          "viewerHasStarred": false,
+                          "owner": { "login": "dev", "avatarUrl": "" },
+                          "primaryLanguage": null,
+                          "defaultBranchRef": { "name": "trunk" },
+                          "issues": { "totalCount": 2 }
+                        }
+                      ]
+                    }
+                  }
+                }
+                """.trimIndent()
+            }
+            respond(
+                content = payload,
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+
+        val gql = GitHubGraphQlService(createClient(engine))
+        val starred = gql.fetchStarredRepositories()
+        assertEquals(1, starred.size)
+        assertEquals("octo/dotfiles", starred[0].fullName)
+        assertEquals(null, starred[0].language)
+        assertEquals("main", starred[0].defaultBranch)
+
+        val search = gql.searchRepositories("kmp-notes")
+        assertEquals(1, search.size)
+        assertEquals("dev/kmp-notes", search[0].fullName)
+        assertEquals("trunk", search[0].defaultBranch)
+    }
+
+    @Test
+    fun repositoryFallsBackToRestForStarredAndSearchWhenGraphQlFails() = runTest {
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/graphql" -> respond(
+                    content = """{"errors":[{"message":"GraphQL resource limit"}]}""",
+                    status = HttpStatusCode.UnprocessableEntity,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/user/starred" -> respond(
+                    content = """
+                        [
+                          {
+                            "node_id": "R_star_rest",
+                            "id": 101,
+                            "name": "awesome-kmp",
+                            "full_name": "jet/awesome-kmp",
+                            "description": null,
+                            "language": "Kotlin",
+                            "stargazers_count": 321,
+                            "forks_count": 10,
+                            "open_issues_count": 4,
+                            "private": false,
+                            "fork": false,
+                            "default_branch": "main",
+                            "updated_at": "2026-11-15T02:00:00Z",
+                            "owner": { "login": "jet", "avatar_url": "" }
+                          }
+                        ]
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/search/repositories" -> {
+                    assertEquals("compose", request.url.parameters["q"])
+                    respond(
+                        content = """
+                            {
+                              "items": [
+                                {
+                                  "node_id": "R_search_rest",
+                                  "id": 202,
+                                  "name": "compose-ui",
+                                  "full_name": "ui/compose-ui",
+                                  "language": null,
+                                  "stargazers_count": 555,
+                                  "forks_count": 20,
+                                  "open_issues_count": 1,
+                                  "default_branch": "main",
+                                  "owner": { "login": "ui", "avatar_url": "" }
+                                }
+                              ]
+                            }
+                        """.trimIndent(),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json")
+                    )
+                }
+                else -> error("Unexpected path: ${request.url.encodedPath}")
+            }
+        }
+
+        val sessionManager = SessionManager(
+            tokenStore = object : TokenStore {
+                var s: AuthSession? = AuthSession("tok", userLogin = "octo")
+                override suspend fun saveSession(session: AuthSession) { s = session }
+                override suspend fun loadSession() = s
+                override suspend fun clearSession() { s = null }
+                override suspend fun saveClientId(clientId: String) {}
+                override suspend fun loadClientId(): String? = null
+                override suspend fun saveThemePreferences(prefs: ThemePreferences) {}
+                override suspend fun loadThemePreferences() = ThemePreferences()
+                override suspend fun saveNotificationPreferences(prefs: NotificationPreferences) {}
+                override suspend fun loadNotificationPreferences() = NotificationPreferences()
+                override suspend fun saveSeenNotificationMarkers(markers: Map<String, String>) {}
+                override suspend fun loadSeenNotificationMarkers() = emptyMap<String, String>()
+            },
+            deviceFlowClient = DeviceFlowClient(HttpClient(engine))
+        )
+        sessionManager.initialize()
+        val repo = GitHubRepository(sessionManager = sessionManager, httpClient = createClient(engine))
+
+        val starred = repo.getStarredRepositories().getOrThrow()
+        assertEquals(1, starred.size)
+        assertEquals("jet/awesome-kmp", starred[0].fullName)
+        assertEquals(true, starred[0].viewerHasStarred)
+        assertEquals(1, repo.peekStarredRepositories()?.size)
+
+        val searched = repo.searchRepositories("compose").getOrThrow()
+        assertEquals(1, searched.size)
+        assertEquals("ui/compose-ui", searched[0].fullName)
+        assertEquals(1, repo.peekSearchRepositories("compose")?.size)
     }
 }
