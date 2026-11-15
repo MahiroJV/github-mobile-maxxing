@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -158,6 +159,7 @@ import dev.octoexpress.model.WorkflowSummary
 import dev.octoexpress.ui.components.CodeViewer
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
+import dev.octoexpress.ui.components.GitHubMarkdownPreNormalized
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
@@ -169,6 +171,7 @@ import dev.octoexpress.ui.components.diffFileLazyItems
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
 import dev.octoexpress.ui.components.formatCompactCount
 import dev.octoexpress.ui.components.parseHexColor
+import dev.octoexpress.ui.components.rememberNormalizedMarkdownSections
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -2158,18 +2161,31 @@ fun RepoDetailScreen(
                         when {
                             file.isBinary -> Text("Binary file (${file.size} bytes)")
                             file.name.endsWith(".md", ignoreCase = true) -> {
-                                Card(
+                                val fileSections = rememberNormalizedMarkdownSections(
+                                    content = file.content,
+                                    repoOwner = repo.owner,
+                                    repoName = repo.name,
+                                    branchRef = currentRef,
+                                    documentPath = file.path
+                                )
+                                Surface(
                                     shape = MaterialTheme.shapes.large,
-                                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                    modifier = Modifier.weight(1f).fillMaxWidth()
                                 ) {
-                                    GitHubMarkdown(
-                                        content = file.content,
-                                        repoOwner = repo.owner,
-                                        repoName = repo.name,
-                                        branchRef = currentRef,
-                                        documentPath = file.path,
-                                        modifier = Modifier.padding(16.dp)
-                                    )
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        itemsIndexed(
+                                            items = fileSections,
+                                            key = { idx, _ -> "file_md_${file.path}_$idx" },
+                                            contentType = { _, _ -> "md_section" }
+                                        ) { _, section ->
+                                            GitHubMarkdownPreNormalized(normalizedContent = section)
+                                        }
+                                    }
                                 }
                             }
                             else -> {
@@ -2182,141 +2198,149 @@ fun RepoDetailScreen(
                         }
                     }
                 } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    val readmeSections = rememberNormalizedMarkdownSections(
+                        content = if (currentPath.isBlank()) readme.orEmpty() else "",
+                        repoOwner = repo.owner,
+                        repoName = repo.name,
+                        branchRef = currentRef,
+                        documentPath = "README.md"
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         // Breadcrumbs + New File action
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            FlowRow(
-                                modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                        item(key = "breadcrumbs", contentType = "breadcrumbs") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                TextButton(onClick = { loadDirectory("", currentRef) }) {
-                                    Text(repo.name)
-                                }
-                                val segments = if (currentPath.isBlank()) emptyList() else currentPath.split('/')
-                                segments.forEachIndexed { idx, segment ->
-                                    val targetPath = segments.take(idx + 1).joinToString("/")
-                                    Text("/", modifier = Modifier.align(Alignment.CenterVertically))
-                                    TextButton(onClick = { loadDirectory(targetPath, currentRef) }) {
-                                        Text(segment)
+                                FlowRow(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    TextButton(onClick = { loadDirectory("", currentRef) }) {
+                                        Text(repo.name)
+                                    }
+                                    val segments = if (currentPath.isBlank()) emptyList() else currentPath.split('/')
+                                    segments.forEachIndexed { idx, segment ->
+                                        val targetPath = segments.take(idx + 1).joinToString("/")
+                                        Text("/", modifier = Modifier.align(Alignment.CenterVertically))
+                                        TextButton(onClick = { loadDirectory(targetPath, currentRef) }) {
+                                            Text(segment)
+                                        }
                                     }
                                 }
-                            }
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        openedCommitSha = null
-                                        showCompareView = false
-                                        showCommitsView = true
-                                        loadCommits(currentRef, forceRefresh = false)
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Lucide.GitCommitHorizontal, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Commits", maxLines = 1, softWrap = false)
-                                }
-                                if (capabilities.canPush) {
-                                    FilledTonalButton(
+                                    OutlinedButton(
                                         onClick = {
-                                            editingExistingFile = null
-                                            fileMutationError = null
-                                            showFileEditorDialog = true
+                                            openedCommitSha = null
+                                            showCompareView = false
+                                            showCommitsView = true
+                                            loadCommits(currentRef, forceRefresh = false)
                                         },
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                     ) {
-                                        Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Icon(Lucide.GitCommitHorizontal, contentDescription = null, modifier = Modifier.size(15.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text("File", maxLines = 1, softWrap = false)
+                                        Text("Commits", maxLines = 1, softWrap = false)
                                     }
-                                }
-                            }
-                        }
-
-                        Card(
-                            shape = MaterialTheme.shapes.large,
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column {
-                                entries.forEach { entry ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                if (entry.type == TreeEntryType.TREE) {
-                                                    loadDirectory(entry.path, currentRef)
-                                                } else {
-                                                    loadFile(entry.path, currentRef)
-                                                }
-                                            }
-                                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = if (entry.type == TreeEntryType.TREE) Lucide.Folder else Lucide.File,
-                                            contentDescription = null,
-                                            tint = if (entry.type == TreeEntryType.TREE) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                    if (capabilities.canPush) {
+                                        FilledTonalButton(
+                                            onClick = {
+                                                editingExistingFile = null
+                                                fileMutationError = null
+                                                showFileEditorDialog = true
                                             },
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(Modifier.width(12.dp))
-                                        Text(
-                                            text = entry.name,
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (entry.type == TreeEntryType.BLOB && entry.size > 0) {
-                                            Text(
-                                                text = "${entry.size} B",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("File", maxLines = 1, softWrap = false)
                                         }
                                     }
                                 }
                             }
                         }
 
-                        if (!readme.isNullOrBlank() && currentPath.isBlank()) {
-                            Card(
-                                shape = MaterialTheme.shapes.large,
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
-                                ),
+                        items(
+                            items = entries,
+                            key = { it.path },
+                            contentType = { "tree_entry" }
+                        ) { entry ->
+                            Surface(
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.padding(18.dp)) {
-                                    Text(
-                                        text = "README.md",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.primary
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (entry.type == TreeEntryType.TREE) {
+                                                loadDirectory(entry.path, currentRef)
+                                            } else {
+                                                loadFile(entry.path, currentRef)
+                                            }
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (entry.type == TreeEntryType.TREE) Lucide.Folder else Lucide.File,
+                                        contentDescription = null,
+                                        tint = if (entry.type == TreeEntryType.TREE) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(Modifier.height(10.dp))
-                                    GitHubMarkdown(
-                                        content = readme!!,
-                                        repoOwner = repo.owner,
-                                        repoName = repo.name,
-                                        branchRef = currentRef,
-                                        documentPath = "README.md"
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(
+                                        text = entry.name,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (entry.type == TreeEntryType.BLOB && entry.size > 0) {
+                                        Text(
+                                            text = "${entry.size} B",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (readmeSections.isNotEmpty() && currentPath.isBlank()) {
+                            item(key = "readme_header", contentType = "readme_header") {
+                                Text(
+                                    text = "README.md",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 12.dp, start = 4.dp, bottom = 2.dp)
+                                )
+                            }
+                            itemsIndexed(
+                                items = readmeSections,
+                                key = { idx, _ -> "readme_${repo.fullName}_${currentRef}_$idx" },
+                                contentType = { _, _ -> "md_section" }
+                            ) { _, section ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                    shape = MaterialTheme.shapes.medium,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    GitHubMarkdownPreNormalized(
+                                        normalizedContent = section,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                                     )
                                 }
                             }

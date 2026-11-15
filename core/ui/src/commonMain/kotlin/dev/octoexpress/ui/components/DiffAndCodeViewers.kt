@@ -29,8 +29,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -320,65 +323,150 @@ fun DiffFileCard(
     }
 }
 
+data class CodeDisplayLine(
+    val lineNumber: Int?,
+    val text: String
+)
+
+private const val CODE_MAX_LINE_SEGMENT_CHARS = 1000
+private const val CODE_MAX_HIGHLIGHT_CHARS = 512
+
+/**
+ * Prepares source code lines for high-FPS virtualized rendering by splitting ultra-long
+ * minified/generated single lines into bounded segments while preserving 1-based line numbers.
+ */
+fun prepareCodeDisplayLines(
+    code: String,
+    maxSegmentChars: Int = CODE_MAX_LINE_SEGMENT_CHARS
+): List<CodeDisplayLine> {
+    if (code.isEmpty()) return listOf(CodeDisplayLine(1, ""))
+    val rawLines = code.split('\n')
+    val out = ArrayList<CodeDisplayLine>(rawLines.size)
+    rawLines.forEachIndexed { index, raw ->
+        val clean = if (raw.endsWith('\r')) raw.dropLast(1) else raw
+        if (clean.length <= maxSegmentChars) {
+            out.add(CodeDisplayLine(index + 1, clean))
+        } else {
+            var start = 0
+            var first = true
+            while (start < clean.length) {
+                val end = (start + maxSegmentChars).coerceAtMost(clean.length)
+                out.add(CodeDisplayLine(if (first) index + 1 else null, clean.substring(start, end)))
+                first = false
+                start = end
+            }
+        }
+    }
+    return out
+}
+
 @Composable
 fun CodeViewer(
     code: String,
     filename: String,
     modifier: Modifier = Modifier
 ) {
-    val lines = remember(code) { code.lines() }
+    val displayLines = remember(code) { prepareCodeDisplayLines(code) }
     val keywordColor = MaterialTheme.colorScheme.primary
     val stringColor = Color(0xFF16A34A)
     val commentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
     val numberColor = MaterialTheme.colorScheme.tertiary
     val defaultColor = MaterialTheme.colorScheme.onSurface
 
+    val maxLineNum = remember(displayLines) {
+        displayLines.lastOrNull { it.lineNumber != null }?.lineNumber ?: displayLines.size
+    }
+    val gutterWidth = remember(maxLineNum) {
+        val digits = maxLineNum.toString().length
+        (digits * 8 + 18).coerceAtLeast(42).dp
+    }
+
+    val syncHighlighted = remember(displayLines, filename, keywordColor, defaultColor) {
+        if (displayLines.size <= 150) {
+            displayLines.map { line ->
+                highlightCodeLineFast(
+                    line = line.text,
+                    keywordColor = keywordColor,
+                    stringColor = stringColor,
+                    commentColor = commentColor,
+                    numberColor = numberColor,
+                    defaultColor = defaultColor
+                )
+            }
+        } else null
+    }
+    val asyncHighlighted by produceState<List<AnnotatedString>?>(
+        initialValue = syncHighlighted,
+        displayLines,
+        filename,
+        keywordColor,
+        defaultColor
+    ) {
+        if (syncHighlighted == null) {
+            value = withContext(Dispatchers.Default) {
+                displayLines.map { line ->
+                    highlightCodeLineFast(
+                        line = line.text,
+                        keywordColor = keywordColor,
+                        stringColor = stringColor,
+                        commentColor = commentColor,
+                        numberColor = numberColor,
+                        defaultColor = defaultColor
+                    )
+                }
+            }
+        }
+    }
+    val prebuiltLines = syncHighlighted ?: asyncHighlighted
+
     val hScroll = rememberScrollState()
+    val codeTextStyle = MaterialTheme.typography.bodySmall.copy(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.5.sp,
+        lineHeight = 18.sp
+    )
+    val lineNumStyle = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
+    val lineNumColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         shape = MaterialTheme.shapes.medium,
         modifier = modifier.fillMaxSize()
     ) {
-        SelectionContainer {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .horizontalScroll(hScroll),
-                contentPadding = PaddingValues(vertical = 10.dp)
-            ) {
-                itemsIndexed(
-                    items = lines,
-                    key = { index, _ -> index },
-                    contentType = { _, _ -> "code_line" }
-                ) { index, rawLine ->
-                    val highlighted = remember(rawLine, filename, keywordColor, defaultColor) {
-                        highlightCodeLine(
-                            line = rawLine,
-                            keywordColor = keywordColor,
-                            stringColor = stringColor,
-                            commentColor = commentColor,
-                            numberColor = numberColor,
-                            defaultColor = defaultColor
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalScroll(hScroll),
+            contentPadding = PaddingValues(vertical = 10.dp)
+        ) {
+            itemsIndexed(
+                items = displayLines,
+                key = { index, _ -> index },
+                contentType = { _, _ -> "code_line" }
+            ) { index, displayLine ->
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.width(gutterWidth)) {
+                        Text(
+                            text = displayLine.lineNumber?.toString().orEmpty(),
+                            style = lineNumStyle,
+                            color = lineNumColor
                         )
                     }
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 1.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(modifier = Modifier.width(46.dp)) {
-                            Text(
-                                text = (index + 1).toString(),
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                            )
-                        }
+                    val styled = prebuiltLines?.getOrNull(index)
+                    if (styled != null) {
                         Text(
-                            text = highlighted,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.5.sp,
-                                lineHeight = 18.sp
-                            ),
+                            text = styled,
+                            style = codeTextStyle,
+                            softWrap = false
+                        )
+                    } else {
+                        Text(
+                            text = displayLine.text,
+                            style = codeTextStyle,
+                            color = defaultColor,
                             softWrap = false
                         )
                     }
@@ -396,37 +484,108 @@ private val CODE_KEYWORDS = setOf(
     "true", "false", "null", "None", "self", "this", "super"
 )
 
-private val TOKEN_REGEX = Regex("""(//.*|#.*|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)""")
+private fun isIdentStart(ch: Char): Boolean = ch in 'a'..'z' || ch in 'A'..'Z' || ch == '_'
+private fun isIdentPart(ch: Char): Boolean = isIdentStart(ch) || ch in '0'..'9'
 
-private fun highlightCodeLine(
+/**
+ * Zero-regex O(N) syntax highlighter safe for running in background batch workers without
+ * Regex engine backtracking or per-frame UI thread allocations.
+ */
+fun highlightCodeLineFast(
     line: String,
     keywordColor: Color,
     stringColor: Color,
     commentColor: Color,
     numberColor: Color,
     defaultColor: Color
-): AnnotatedString = buildAnnotatedString {
-    var cursor = 0
-    for (match in TOKEN_REGEX.findAll(line)) {
-        if (match.range.first > cursor) {
-            withStyle(SpanStyle(color = defaultColor)) {
-                append(line.substring(cursor, match.range.first))
-            }
+): AnnotatedString {
+    if (line.isEmpty() || line.length > CODE_MAX_HIGHLIGHT_CHARS) {
+        return buildAnnotatedString {
+            withStyle(SpanStyle(color = defaultColor)) { append(line) }
         }
-        val token = match.value
-        val style = when {
-            token.startsWith("//") || token.startsWith("#") -> SpanStyle(color = commentColor)
-            token.startsWith("\"") || token.startsWith("'") -> SpanStyle(color = stringColor)
-            token.first().isDigit() -> SpanStyle(color = numberColor)
-            token in CODE_KEYWORDS -> SpanStyle(color = keywordColor, fontWeight = FontWeight.SemiBold)
-            else -> SpanStyle(color = defaultColor)
-        }
-        withStyle(style) { append(token) }
-        cursor = match.range.last + 1
     }
-    if (cursor < line.length) {
-        withStyle(SpanStyle(color = defaultColor)) {
-            append(line.substring(cursor))
+    return buildAnnotatedString {
+        var i = 0
+        val len = line.length
+        while (i < len) {
+            val c = line[i]
+            when {
+                c == '#' || (c == '/' && i + 1 < len && line[i + 1] == '/') -> {
+                    withStyle(SpanStyle(color = commentColor)) {
+                        append(line, i, len)
+                    }
+                    break
+                }
+                c == '"' || c == '\'' -> {
+                    val quote = c
+                    var j = i + 1
+                    while (j < len) {
+                        val q = line[j]
+                        if (q == '\\' && j + 1 < len) {
+                            j += 2
+                        } else if (q == quote) {
+                            j++
+                            break
+                        } else {
+                            j++
+                        }
+                    }
+                    withStyle(SpanStyle(color = stringColor)) {
+                        append(line, i, j)
+                    }
+                    i = j
+                }
+                c in '0'..'9' -> {
+                    var j = i + 1
+                    var sawDot = false
+                    while (j < len) {
+                        val d = line[j]
+                        if (d in '0'..'9') {
+                            j++
+                        } else if (d == '.' && !sawDot && j + 1 < len && line[j + 1] in '0'..'9') {
+                            sawDot = true
+                            j++
+                        } else {
+                            break
+                        }
+                    }
+                    withStyle(SpanStyle(color = numberColor)) {
+                        append(line, i, j)
+                    }
+                    i = j
+                }
+                isIdentStart(c) -> {
+                    var j = i + 1
+                    while (j < len && isIdentPart(line[j])) j++
+                    val word = line.substring(i, j)
+                    if (word in CODE_KEYWORDS) {
+                        withStyle(SpanStyle(color = keywordColor, fontWeight = FontWeight.SemiBold)) {
+                            append(word)
+                        }
+                    } else {
+                        withStyle(SpanStyle(color = defaultColor)) {
+                            append(word)
+                        }
+                    }
+                    i = j
+                }
+                else -> {
+                    var j = i + 1
+                    while (j < len) {
+                        val n = line[j]
+                        if (n == '#' || n == '"' || n == '\'' || n in '0'..'9' || isIdentStart(n) ||
+                            (n == '/' && j + 1 < len && line[j + 1] == '/')
+                        ) {
+                            break
+                        }
+                        j++
+                    }
+                    withStyle(SpanStyle(color = defaultColor)) {
+                        append(line, i, j)
+                    }
+                    i = j
+                }
+            }
         }
     }
 }

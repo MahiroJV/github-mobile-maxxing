@@ -45,4 +45,27 @@ class MarkdownBlockTest {
             normalizedSub
         )
     }
+
+    @Test
+    fun `splitMarkdownIntoSections splits large readmes while preserving fenced code blocks`() {
+        val codeBlock = buildString {
+            appendLine("# Section One")
+            repeat(15) { appendLine("Paragraph line $it explaining usage.") }
+            appendLine("```kotlin")
+            appendLine("# Not a heading inside fence")
+            repeat(55) { appendLine("val x$it = $it") }
+            appendLine("```")
+            appendLine("")
+            appendLine("## Section Two")
+            repeat(20) { appendLine("More docs $it.") }
+        }
+        val sections = splitMarkdownIntoSections(
+            markdown = codeBlock,
+            maxLinesPerSection = 25,
+            minCharsToSplit = 200
+        )
+        assertTrue(sections.size >= 2, "Expected large markdown to split into multiple sections")
+        val blockWithFence = sections.first { "val x0 = 0" in it }
+        assertTrue("val x54 = 54" in blockWithFence, "Fenced code block must remain intact inside one section")
+    }
 }
