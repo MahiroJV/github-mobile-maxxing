@@ -35,6 +35,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.memory.MemoryCache
@@ -68,7 +69,7 @@ private enum class AppDestination(
 ) {
     HOME("Home", Lucide.House),
     INBOX("Inbox", Lucide.Inbox),
-    ISSUES_PRS("Issues & PRs", Lucide.GitPullRequest),
+    ISSUES_PRS("Issues", Lucide.GitPullRequest),
     REPOS("Repos", Lucide.FolderGit2),
     SETTINGS("Settings", Lucide.Settings)
 }
@@ -254,7 +255,14 @@ private fun MainAuthenticatedShell(
                             Icon(dest.icon, contentDescription = dest.label)
                         }
                     },
-                    label = { Text(dest.label) },
+                    label = {
+                        Text(
+                            text = dest.label,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
                     selected = currentDestination == dest,
                     onClick = { currentDestination = dest }
                 )
