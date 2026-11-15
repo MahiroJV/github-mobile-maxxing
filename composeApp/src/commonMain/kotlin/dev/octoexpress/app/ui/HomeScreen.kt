@@ -141,6 +141,8 @@ fun HomeScreen(
                 container = container,
                 onBack = { selectedRepo = null },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
+                onOpenRepo = { selectedRepo = it },
+                onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
         }

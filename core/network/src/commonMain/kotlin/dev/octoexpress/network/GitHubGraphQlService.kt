@@ -643,6 +643,33 @@ class GitHubGraphQlService(
         )
     }
 
+    suspend fun fetchRepoStargazers(owner: String, name: String, first: Int = 40): List<UserSummary> {
+        val count = first.coerceIn(1, 100)
+        val data = execute(
+            query = """
+                query(${'$'}owner: String!, ${'$'}name: String!) {
+                  repository(owner: ${'$'}owner, name: ${'$'}name) {
+                    stargazers(first: $count, orderBy: { field: STARRED_AT, direction: DESC }) {
+                      nodes {
+                        login
+                        avatarUrl
+                        url
+                      }
+                    }
+                  }
+                }
+            """.trimIndent(),
+            variables = mapOf("owner" to owner, "name" to name)
+        )
+        val nodes = data.obj("repository")?.obj("stargazers")?.arr("nodes")
+            ?: throw GitHubApiException(404, "Repository $owner/$name not found")
+        return nodes.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            if (obj.str("login").isNullOrBlank()) return@mapNotNull null
+            parseUser(obj)
+        }
+    }
+
     suspend fun fetchContributionCalendar(login: String): ContributionCalendar {
         val data = execute(
             query = """

@@ -1168,7 +1168,8 @@ fun RepoDetailScreen(
     var stargazersList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
     var forksList by remember(repo.fullName) { mutableStateOf<List<RepoSummary>?>(null) }
     var contributorsList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
-    var peopleLoading by remember { mutableStateOf(false) }
+    var peopleLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var peopleError by remember(repo.fullName) { mutableStateOf<String?>(null) }
 
     var repoTags by remember(repo.fullName) { mutableStateOf<List<TagRef>>(emptyList()) }
     var repoCommits by remember(repo.fullName, currentRef) {
@@ -1433,18 +1434,35 @@ fun RepoDetailScreen(
     fun openPeopleTab(tab: RepoPeopleTab) {
         peopleTab = tab
         showPeopleDialog = true
+        peopleError = null
+        val targetOwner = detail?.summary?.owner?.takeIf { it.isNotBlank() }
+            ?: repo.owner.ifBlank { repo.fullName.substringBefore('/', "") }.trim()
+        val targetRepo = detail?.summary?.name?.takeIf { it.isNotBlank() }
+            ?: repo.name.ifBlank { repo.fullName.substringAfter('/', repo.name) }.trim()
         scope.launch {
             peopleLoading = true
             when (tab) {
-                RepoPeopleTab.STARGAZERS -> container.repository.getRepoStargazers(repo.owner, repo.name)
+                RepoPeopleTab.STARGAZERS -> container.repository.getRepoStargazers(targetOwner, targetRepo)
                     .onSuccess { stargazersList = it }
-                    .onFailure { onMessage(it.message ?: "Failed to load stargazers") }
-                RepoPeopleTab.FORKS -> container.repository.getRepoForks(repo.owner, repo.name)
+                    .onFailure { err ->
+                        val msg = err.message ?: "Failed to load stargazers"
+                        peopleError = msg
+                        onMessage(msg)
+                    }
+                RepoPeopleTab.FORKS -> container.repository.getRepoForks(targetOwner, targetRepo)
                     .onSuccess { forksList = it }
-                    .onFailure { onMessage(it.message ?: "Failed to load forks") }
-                RepoPeopleTab.CONTRIBUTORS -> container.repository.getRepoContributors(repo.owner, repo.name)
+                    .onFailure { err ->
+                        val msg = err.message ?: "Failed to load forks"
+                        peopleError = msg
+                        onMessage(msg)
+                    }
+                RepoPeopleTab.CONTRIBUTORS -> container.repository.getRepoContributors(targetOwner, targetRepo)
                     .onSuccess { contributorsList = it }
-                    .onFailure { onMessage(it.message ?: "Failed to load contributors") }
+                    .onFailure { err ->
+                        val msg = err.message ?: "Failed to load contributors"
+                        peopleError = msg
+                        onMessage(msg)
+                    }
             }
             peopleLoading = false
         }
@@ -2763,6 +2781,23 @@ fun RepoDetailScreen(
                     if (peopleLoading) {
                         OctoWavyProgress()
                     }
+                    peopleError?.let { err ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = err,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { openPeopleTab(peopleTab) }) {
+                                Text("Retry")
+                            }
+                        }
+                    }
                     Column(
                         modifier = Modifier.fillMaxWidth().height(280.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2770,7 +2805,7 @@ fun RepoDetailScreen(
                         when (peopleTab) {
                             RepoPeopleTab.STARGAZERS -> {
                                 val list = stargazersList.orEmpty()
-                                if (!peopleLoading && list.isEmpty()) {
+                                if (!peopleLoading && peopleError == null && list.isEmpty()) {
                                     Text("No stargazers yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 list.forEach { user ->
@@ -2792,7 +2827,7 @@ fun RepoDetailScreen(
                             }
                             RepoPeopleTab.FORKS -> {
                                 val list = forksList.orEmpty()
-                                if (!peopleLoading && list.isEmpty()) {
+                                if (!peopleLoading && peopleError == null && list.isEmpty()) {
                                     Text("No forks yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 list.forEach { fork ->
@@ -2816,7 +2851,7 @@ fun RepoDetailScreen(
                             }
                             RepoPeopleTab.CONTRIBUTORS -> {
                                 val list = contributorsList.orEmpty()
-                                if (!peopleLoading && list.isEmpty()) {
+                                if (!peopleLoading && peopleError == null && list.isEmpty()) {
                                     Text("No contributors listed.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 list.forEach { user ->

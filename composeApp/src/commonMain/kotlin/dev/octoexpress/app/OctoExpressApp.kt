@@ -310,6 +310,7 @@ private fun MainAuthenticatedShell(
                         container = container,
                         onBack = { navState = navState.copy(overlayRepo = null) },
                         onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
+                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
                         onOpenUser = openUserProfile,
                         onMessage = showMessage
                     )

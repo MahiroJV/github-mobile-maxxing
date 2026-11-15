@@ -1613,7 +1613,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchUserProfileRest(login: String): UserProfile {
-        val res = httpClient.get("$baseUrl/users/$login")
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/users/$encodedLogin")
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to load user @$login (${res.status.value})")
         }
@@ -1642,12 +1643,14 @@ class GitHubRestService(
     }
 
     suspend fun checkViewerFollowing(login: String): Boolean {
-        val res = httpClient.get("$baseUrl/user/following/$login")
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/user/following/$encodedLogin")
         return res.status.value == 204
     }
 
     suspend fun setFollowingUser(login: String, follow: Boolean) {
-        val url = "$baseUrl/user/following/$login"
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val url = "$baseUrl/user/following/$encodedLogin"
         val res = if (follow) {
             httpClient.put(url) {
                 header(HttpHeaders.ContentLength, "0")
@@ -1661,10 +1664,11 @@ class GitHubRestService(
     }
 
     suspend fun fetchUserRepositories(login: String, isOrganization: Boolean = false, perPage: Int = 40): List<RepoSummary> {
+        val encodedLogin = login.trim().encodeURLPathPart()
         val endpoint = if (isOrganization) {
-            "$baseUrl/orgs/$login/repos"
+            "$baseUrl/orgs/$encodedLogin/repos"
         } else {
-            "$baseUrl/users/$login/repos"
+            "$baseUrl/users/$encodedLogin/repos"
         }
         val res = httpClient.get(endpoint) {
             parameter("sort", "updated")
@@ -1678,7 +1682,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchUserStarredRepositories(login: String, perPage: Int = 30): List<RepoSummary> {
-        val res = httpClient.get("$baseUrl/users/$login/starred") {
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/users/$encodedLogin/starred") {
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -1688,7 +1693,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchUserOrganizations(login: String): List<OrganizationSummary> {
-        val res = httpClient.get("$baseUrl/users/$login/orgs") {
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/users/$encodedLogin/orgs") {
             parameter("per_page", 30)
         }
         if (!res.status.isSuccess()) {
@@ -1700,7 +1706,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchUserFollowers(login: String, perPage: Int = 40): List<UserSummary> {
-        val res = httpClient.get("$baseUrl/users/$login/followers") {
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/users/$encodedLogin/followers") {
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -1712,7 +1719,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchUserFollowing(login: String, perPage: Int = 40): List<UserSummary> {
-        val res = httpClient.get("$baseUrl/users/$login/following") {
+        val encodedLogin = login.trim().encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/users/$encodedLogin/following") {
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -1856,7 +1864,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchRepoStargazers(owner: String, repo: String, perPage: Int = 40): List<UserSummary> {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/stargazers") {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/stargazers") {
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -1868,7 +1877,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchRepoForks(owner: String, repo: String, perPage: Int = 30): List<RepoSummary> {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/forks") {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/forks") {
             parameter("sort", "stargazers")
             parameter("per_page", perPage)
         }
@@ -1879,7 +1889,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchRepoContributors(owner: String, repo: String, perPage: Int = 30): List<UserSummary> {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/contributors") {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/contributors") {
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -1888,6 +1899,15 @@ class GitHubRestService(
         return res.body<List<RestUserFollowItemDto>>().map {
             UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
         }
+    }
+
+    private fun normalizeOwnerRepo(owner: String, repo: String): Pair<String, String> {
+        val trimmedOwner = owner.trim()
+        val trimmedRepo = repo.trim()
+        if (trimmedOwner.isBlank() && '/' in trimmedRepo) {
+            return trimmedRepo.substringBefore('/').trim() to trimmedRepo.substringAfter('/').trim()
+        }
+        return trimmedOwner to trimmedRepo.substringAfterLast('/')
     }
 
     suspend fun fetchRepoLabels(owner: String, repo: String, perPage: Int = 100): List<LabelTag> {

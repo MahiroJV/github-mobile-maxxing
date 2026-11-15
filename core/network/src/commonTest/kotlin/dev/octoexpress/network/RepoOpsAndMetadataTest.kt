@@ -165,6 +165,50 @@ class RepoOpsAndMetadataTest {
     }
 
     @Test
+    fun `stargazers fallback to GraphQL when REST returns 404 and handle fullName repo argument`() = runTest {
+        val seenPaths = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            seenPaths += path
+            when {
+                path == "/repos/other-org/cool-lib/stargazers" -> respond(
+                    content = """{"message":"Not Found"}""",
+                    status = HttpStatusCode.NotFound,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                path == "/graphql" -> respond(
+                    content = """
+                        {
+                          "data": {
+                            "repository": {
+                              "stargazers": {
+                                "nodes": [
+                                  { "login": "bob", "avatarUrl": "https://a/2.png", "url": "https://github.com/bob" }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                else -> error("Unexpected request: ${request.method} $path")
+            }
+        }
+
+        val http = createClient(engine)
+        val sm = SessionManager(RepoOpsTokenStore(), DeviceFlowClient(http, "cid"))
+        sm.initialize()
+        val repo = GitHubRepository(sm, httpClient = http)
+
+        val users = repo.getRepoStargazers("", "other-org/cool-lib").getOrThrow()
+        assertEquals(listOf("bob"), users.map { it.login })
+        assertTrue("/repos/other-org/cool-lib/stargazers" in seenPaths)
+        assertTrue("/graphql" in seenPaths)
+    }
+
+    @Test
     fun issueMetadataFetchCreateAndPatchWork() = runTest {
         val patchBodies = mutableListOf<String>()
         val engine = MockEngine { request ->

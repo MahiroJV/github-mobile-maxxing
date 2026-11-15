@@ -1059,15 +1059,29 @@ class GitHubRepository(
     }
 
     suspend fun getRepoStargazers(owner: String, repo: String): Result<List<UserSummary>> = runCatching {
-        restService.fetchRepoStargazers(owner, repo)
+        val cleanOwner = owner.trim().ifBlank { repo.substringBefore('/', "").trim() }
+        val cleanRepo = repo.substringAfterLast('/').trim()
+        try {
+            restService.fetchRepoStargazers(cleanOwner, cleanRepo)
+        } catch (restErr: Throwable) {
+            try {
+                graphQlService.fetchRepoStargazers(cleanOwner, cleanRepo)
+            } catch (_: Throwable) {
+                throw restErr
+            }
+        }
     }
 
     suspend fun getRepoForks(owner: String, repo: String): Result<List<RepoSummary>> = runCatching {
-        restService.fetchRepoForks(owner, repo)
+        val cleanOwner = owner.trim().ifBlank { repo.substringBefore('/', "").trim() }
+        val cleanRepo = repo.substringAfterLast('/').trim()
+        restService.fetchRepoForks(cleanOwner, cleanRepo)
     }
 
     suspend fun getRepoContributors(owner: String, repo: String): Result<List<UserSummary>> = runCatching {
-        restService.fetchRepoContributors(owner, repo)
+        val cleanOwner = owner.trim().ifBlank { repo.substringBefore('/', "").trim() }
+        val cleanRepo = repo.substringAfterLast('/').trim()
+        restService.fetchRepoContributors(cleanOwner, cleanRepo)
     }
 
     suspend fun getRepoLabels(
