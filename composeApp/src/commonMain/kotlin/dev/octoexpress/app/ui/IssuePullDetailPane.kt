@@ -102,6 +102,7 @@ import dev.octoexpress.ui.components.GitHubLabelChip
 import dev.octoexpress.ui.components.GitHubMarkdown
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFloatingToolbar
+import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoSplitActionButton
 import dev.octoexpress.ui.components.OctoWavyProgress
@@ -815,102 +816,77 @@ fun IssuePullDetailPane(
     }
 
     if (showCommentDialog) {
-        AlertDialog(
-            onDismissRequest = { showCommentDialog = false },
-            title = { Text("Comment on #${target.number}") },
-            text = {
-                OutlinedTextField(
-                    value = commentDraft,
-                    onValueChange = { commentDraft = it },
-                    label = { Text("Markdown comment") },
-                    minLines = 4,
-                    maxLines = 8,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    enabled = commentDraft.isNotBlank() && !actionBusy,
-                    onClick = {
-                        val text = commentDraft
-                        showCommentDialog = false
-                        scope.launch {
-                            actionBusy = true
-                            container.repository.postComment(target.owner, target.repo, target.number, text)
-                                .onSuccess {
-                                    commentDraft = ""
-                                    onMessage("Comment posted")
-                                    loadDetail(forceRefresh = true)
-                                }
-                                .onFailure { onMessage(it.message ?: "Failed to post comment") }
-                            actionBusy = false
+        OctoFullScreenEditorScaffold(
+            title = "Comment on #${target.number}",
+            subtitle = "${target.owner}/${target.repo}",
+            saveLabel = "Post",
+            canSave = commentDraft.isNotBlank(),
+            isSubmitting = actionBusy,
+            bodyValue = commentDraft,
+            onBodyChange = { commentDraft = it },
+            bodyLabel = "Markdown comment",
+            supportsMarkdownPreview = true,
+            onDismiss = { showCommentDialog = false },
+            onSave = {
+                val text = commentDraft
+                showCommentDialog = false
+                scope.launch {
+                    actionBusy = true
+                    container.repository.postComment(target.owner, target.repo, target.number, text)
+                        .onSuccess {
+                            commentDraft = ""
+                            onMessage("Comment posted")
+                            loadDetail(forceRefresh = true)
                         }
-                    }
-                ) {
-                    Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Post")
+                        .onFailure { onMessage(it.message ?: "Failed to post comment") }
+                    actionBusy = false
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCommentDialog = false }) { Text("Cancel") }
             }
         )
     }
 
     if (showReviewDialog) {
-        AlertDialog(
-            onDismissRequest = { showReviewDialog = false },
-            title = { Text("Submit PR Review") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Decision", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                        OctoDropdownSelector(
-                            options = ReviewEvent.entries,
-                            selected = reviewEvent,
-                            onSelect = { reviewEvent = it },
-                            labelProvider = { it.displayLabel }
-                        )
-                    }
-                    OutlinedTextField(
-                        value = reviewBody,
-                        onValueChange = { reviewBody = it },
-                        label = { Text("Review summary (optional for Approve)") },
-                        minLines = 3,
-                        modifier = Modifier.fillMaxWidth()
+        OctoFullScreenEditorScaffold(
+            title = "Submit PR Review",
+            subtitle = "#${target.number} · ${reviewEvent.displayLabel}",
+            saveLabel = "Submit",
+            canSave = reviewEvent == ReviewEvent.APPROVE || reviewBody.isNotBlank(),
+            isSubmitting = actionBusy,
+            bodyValue = reviewBody,
+            onBodyChange = { reviewBody = it },
+            bodyLabel = "Review summary (optional for Approve)",
+            supportsMarkdownPreview = true,
+            onDismiss = { showReviewDialog = false },
+            onSave = {
+                val event = reviewEvent
+                val body = reviewBody
+                showReviewDialog = false
+                scope.launch {
+                    actionBusy = true
+                    container.repository.submitPullReview(target.owner, target.repo, target.number, event, body)
+                        .onSuccess {
+                            reviewBody = ""
+                            onMessage("Review submitted (${event.displayLabel})")
+                            loadDetail(forceRefresh = true)
+                        }
+                        .onFailure { onMessage(it.message ?: "Review submission failed") }
+                    actionBusy = false
+                }
+            },
+            headerContent = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Decision", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    OctoDropdownSelector(
+                        options = ReviewEvent.entries,
+                        selected = reviewEvent,
+                        onSelect = { reviewEvent = it },
+                        labelProvider = { it.displayLabel }
                     )
                 }
-            },
-            confirmButton = {
-                Button(
-                    enabled = !actionBusy && (reviewEvent == ReviewEvent.APPROVE || reviewBody.isNotBlank()),
-                    onClick = {
-                        val event = reviewEvent
-                        val body = reviewBody
-                        showReviewDialog = false
-                        scope.launch {
-                            actionBusy = true
-                            container.repository.submitPullReview(target.owner, target.repo, target.number, event, body)
-                                .onSuccess {
-                                    reviewBody = ""
-                                    onMessage("Review submitted (${event.displayLabel})")
-                                    loadDetail(forceRefresh = true)
-                                }
-                                .onFailure { onMessage(it.message ?: "Review submission failed") }
-                            actionBusy = false
-                        }
-                    }
-                ) {
-                    Text("Submit")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showReviewDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -1179,96 +1155,72 @@ fun IssuePullDetailPane(
 
     pendingDiffCommentTarget?.let { (filePath, lineNum, side) ->
         val commitSha = detail?.headRefOid
-        AlertDialog(
-            onDismissRequest = { pendingDiffCommentTarget = null },
-            title = {
-                Text(
-                    if (lineNum != null) "Review Comment: ${filePath.substringAfterLast('/')}:$lineNum"
-                    else "File Comment: ${filePath.substringAfterLast('/')}"
-                )
-            },
-            text = {
-                OutlinedTextField(
-                    value = diffCommentBody,
-                    onValueChange = { diffCommentBody = it },
-                    label = { Text("Comment (Markdown)") },
-                    minLines = 3,
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    enabled = diffCommentBody.trim().isNotBlank() && !commitSha.isNullOrBlank() && !actionBusy,
-                    onClick = {
-                        val bodyToPost = diffCommentBody.trim()
-                        val sha = commitSha ?: return@Button
-                        pendingDiffCommentTarget = null
-                        scope.launch {
-                            actionBusy = true
-                            container.repository.createPullDiffComment(
-                                owner = target.owner,
-                                repo = target.repo,
-                                number = target.number,
-                                commitId = sha,
-                                path = filePath,
-                                body = bodyToPost,
-                                line = lineNum,
-                                side = side
-                            ).onSuccess {
-                                onMessage("Added inline diff comment")
-                                loadDetail(forceRefresh = true)
-                            }.onFailure {
-                                onMessage(it.message ?: "Failed to post diff comment")
-                            }
-                            actionBusy = false
-                        }
+        OctoFullScreenEditorScaffold(
+            title = if (lineNum != null) "Review Comment: ${filePath.substringAfterLast('/')}:$lineNum"
+            else "File Comment: ${filePath.substringAfterLast('/')}",
+            subtitle = filePath,
+            saveLabel = "Post",
+            canSave = diffCommentBody.trim().isNotBlank() && !commitSha.isNullOrBlank(),
+            isSubmitting = actionBusy,
+            bodyValue = diffCommentBody,
+            onBodyChange = { diffCommentBody = it },
+            bodyLabel = "Comment (Markdown)",
+            supportsMarkdownPreview = true,
+            onDismiss = { pendingDiffCommentTarget = null },
+            onSave = {
+                val bodyToPost = diffCommentBody.trim()
+                val sha = commitSha ?: return@OctoFullScreenEditorScaffold
+                pendingDiffCommentTarget = null
+                scope.launch {
+                    actionBusy = true
+                    container.repository.createPullDiffComment(
+                        owner = target.owner,
+                        repo = target.repo,
+                        number = target.number,
+                        commitId = sha,
+                        path = filePath,
+                        body = bodyToPost,
+                        line = lineNum,
+                        side = side
+                    ).onSuccess {
+                        onMessage("Added inline diff comment")
+                        loadDetail(forceRefresh = true)
+                    }.onFailure {
+                        onMessage(it.message ?: "Failed to post diff comment")
                     }
-                ) { Text("Post") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDiffCommentTarget = null }) { Text("Cancel") }
+                    actionBusy = false
+                }
             }
         )
     }
 
     editingComment?.let { c ->
-        AlertDialog(
-            onDismissRequest = { editingComment = null },
-            title = { Text("Edit Comment") },
-            text = {
-                OutlinedTextField(
-                    value = editingCommentBody,
-                    onValueChange = { editingCommentBody = it },
-                    label = { Text("Comment body") },
-                    minLines = 3,
-                    maxLines = 8,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    enabled = editingCommentBody.trim().isNotBlank() && !actionBusy,
-                    onClick = {
-                        val newBody = editingCommentBody.trim()
-                        editingComment = null
-                        scope.launch {
-                            actionBusy = true
-                            container.repository.updateIssueComment(
-                                target.owner, target.repo, target.number, c.id, newBody
-                            ).onSuccess {
-                                onMessage("Updated comment")
-                                loadDetail(forceRefresh = true)
-                            }.onFailure {
-                                onMessage(it.message ?: "Failed to update comment")
-                            }
-                            actionBusy = false
-                        }
+        OctoFullScreenEditorScaffold(
+            title = "Edit Comment",
+            subtitle = "@${c.author.login} on #${target.number}",
+            saveLabel = "Save",
+            canSave = editingCommentBody.trim().isNotBlank(),
+            isSubmitting = actionBusy,
+            bodyValue = editingCommentBody,
+            onBodyChange = { editingCommentBody = it },
+            bodyLabel = "Comment body (Markdown)",
+            supportsMarkdownPreview = true,
+            onDismiss = { editingComment = null },
+            onSave = {
+                val newBody = editingCommentBody.trim()
+                editingComment = null
+                scope.launch {
+                    actionBusy = true
+                    container.repository.updateIssueComment(
+                        target.owner, target.repo, target.number, c.id, newBody
+                    ).onSuccess {
+                        onMessage("Updated comment")
+                        loadDetail(forceRefresh = true)
+                    }.onFailure {
+                        onMessage(it.message ?: "Failed to update comment")
                     }
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingComment = null }) { Text("Cancel") }
+                    actionBusy = false
+                }
             }
         )
     }

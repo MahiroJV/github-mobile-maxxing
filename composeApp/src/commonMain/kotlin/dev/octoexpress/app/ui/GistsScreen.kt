@@ -78,6 +78,7 @@ import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
 import dev.octoexpress.ui.components.OctoConnectedButtonGroup
 import dev.octoexpress.ui.components.OctoFilledIcons
+import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.StarActionButton
@@ -137,7 +138,11 @@ fun GistsScreen(
     }
 
     BackHandler(enabled = true) {
-        if (selectedDetail != null) selectedDetail = null else onBack()
+        when {
+            showEditorDialog -> if (!mutationBusy) showEditorDialog = false
+            selectedDetail != null -> selectedDetail = null
+            else -> onBack()
+        }
     }
 
     fun loadGists(forceRefresh: Boolean = false) {
@@ -185,8 +190,9 @@ fun GistsScreen(
         loadGists(forceRefresh = false)
     }
 
-    val opened = selectedDetail
-    if (opened != null) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        val opened = selectedDetail
+        if (opened != null) {
         GistDetailView(
             detail = opened,
             isOwner = selfLogin != null && opened.summary.ownerLogin.equals(selfLogin, ignoreCase = true),
@@ -366,102 +372,103 @@ fun GistsScreen(
         }
     }
 
-    if (showEditorDialog) {
-        val editing = editingDetail
-        val primaryFile = editing?.files?.firstOrNull()
-        GistEditorDialog(
-            isCreating = editing == null,
-            initialDescription = editing?.summary?.description.orEmpty(),
-            initialFilename = primaryFile?.filename ?: "snippet.txt",
-            initialContent = primaryFile?.content.orEmpty(),
-            initialPublic = editing?.summary?.isPublic ?: false,
-            isSubmitting = mutationBusy,
-            errorMsg = mutationError,
-            onDismiss = { if (!mutationBusy) showEditorDialog = false },
-            onSave = { desc, filename, content, isPublic ->
-                scope.launch {
-                    mutationBusy = true
-                    mutationError = null
-                    val result = if (editing == null) {
-                        container.repository.createGist(
-                            description = desc,
-                            isPublic = isPublic,
-                            files = mapOf(filename to content)
-                        )
-                    } else {
-                        val originalName = editing.files.firstOrNull()?.filename
-                        val updates = buildMap<String, String?> {
-                            if (originalName != null && originalName != filename) {
-                                put(originalName, null)
+        if (showEditorDialog) {
+            val editing = editingDetail
+            val primaryFile = editing?.files?.firstOrNull()
+            GistFullScreenEditor(
+                isCreating = editing == null,
+                initialDescription = editing?.summary?.description.orEmpty(),
+                initialFilename = primaryFile?.filename ?: "snippet.txt",
+                initialContent = primaryFile?.content.orEmpty(),
+                initialPublic = editing?.summary?.isPublic ?: false,
+                isSubmitting = mutationBusy,
+                errorMsg = mutationError,
+                onDismiss = { if (!mutationBusy) showEditorDialog = false },
+                onSave = { desc, filename, content, isPublic ->
+                    scope.launch {
+                        mutationBusy = true
+                        mutationError = null
+                        val result = if (editing == null) {
+                            container.repository.createGist(
+                                description = desc,
+                                isPublic = isPublic,
+                                files = mapOf(filename to content)
+                            )
+                        } else {
+                            val originalName = editing.files.firstOrNull()?.filename
+                            val updates = buildMap<String, String?> {
+                                if (originalName != null && originalName != filename) {
+                                    put(originalName, null)
+                                }
+                                put(filename, content)
                             }
-                            put(filename, content)
+                            container.repository.updateGist(
+                                gistId = editing.summary.id,
+                                description = desc,
+                                updatedFiles = updates
+                            )
                         }
-                        container.repository.updateGist(
-                            gistId = editing.summary.id,
-                            description = desc,
-                            updatedFiles = updates
-                        )
-                    }
-                    result.onSuccess { updated ->
-                        mutationBusy = false
-                        showEditorDialog = false
-                        selectedDetail = updated
-                        onMessage(if (editing == null) "Created gist" else "Updated gist")
-                        loadGists(forceRefresh = true)
-                    }.onFailure { err ->
-                        mutationBusy = false
-                        mutationError = err.message ?: "Failed to save gist"
+                        result.onSuccess { updated ->
+                            mutationBusy = false
+                            showEditorDialog = false
+                            selectedDetail = updated
+                            onMessage(if (editing == null) "Created gist" else "Updated gist")
+                            loadGists(forceRefresh = true)
+                        }.onFailure { err ->
+                            mutationBusy = false
+                            mutationError = err.message ?: "Failed to save gist"
+                        }
                     }
                 }
-            }
-        )
-    }
+            )
+        }
 
-    if (showDeleteConfirm && opened != null) {
-        AlertDialog(
-            onDismissRequest = { if (!mutationBusy) showDeleteConfirm = false },
-            title = { Text("Delete Gist") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Permanently delete this gist (${opened.files.firstOrNull()?.filename ?: opened.summary.id})?")
-                    if (!mutationError.isNullOrBlank()) {
-                        Text(mutationError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    enabled = !mutationBusy,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    ),
-                    onClick = {
-                        scope.launch {
-                            mutationBusy = true
-                            mutationError = null
-                            container.repository.deleteGist(opened.summary.id)
-                                .onSuccess {
-                                    mutationBusy = false
-                                    showDeleteConfirm = false
-                                    selectedDetail = null
-                                    onMessage("Deleted gist")
-                                    loadGists(forceRefresh = true)
-                                }
-                                .onFailure { err ->
-                                    mutationBusy = false
-                                    mutationError = err.message ?: "Failed to delete gist"
-                                }
+        if (showDeleteConfirm && opened != null) {
+            AlertDialog(
+                onDismissRequest = { if (!mutationBusy) showDeleteConfirm = false },
+                title = { Text("Delete Gist") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Permanently delete this gist (${opened.files.firstOrNull()?.filename ?: opened.summary.id})?")
+                        if (!mutationError.isNullOrBlank()) {
+                            Text(mutationError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                ) {
-                    Text(if (mutationBusy) "Deleting..." else "Delete")
+                },
+                confirmButton = {
+                    Button(
+                        enabled = !mutationBusy,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        onClick = {
+                            scope.launch {
+                                mutationBusy = true
+                                mutationError = null
+                                container.repository.deleteGist(opened.summary.id)
+                                    .onSuccess {
+                                        mutationBusy = false
+                                        showDeleteConfirm = false
+                                        selectedDetail = null
+                                        onMessage("Deleted gist")
+                                        loadGists(forceRefresh = true)
+                                    }
+                                    .onFailure { err ->
+                                        mutationBusy = false
+                                        mutationError = err.message ?: "Failed to delete gist"
+                                    }
+                            }
+                        }
+                    ) {
+                        Text(if (mutationBusy) "Deleting..." else "Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(enabled = !mutationBusy, onClick = { showDeleteConfirm = false }) { Text("Cancel") }
                 }
-            },
-            dismissButton = {
-                TextButton(enabled = !mutationBusy, onClick = { showDeleteConfirm = false }) { Text("Cancel") }
-            }
-        )
+            )
+        }
     }
 }
 
@@ -669,7 +676,7 @@ private fun GistDetailView(
 }
 
 @Composable
-private fun GistEditorDialog(
+private fun GistFullScreenEditor(
     isCreating: Boolean,
     initialDescription: String,
     initialFilename: String,
@@ -685,71 +692,60 @@ private fun GistEditorDialog(
     var content by remember(initialContent) { mutableStateOf(initialContent) }
     var isPublic by remember(initialPublic) { mutableStateOf(initialPublic) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (isCreating) "New Gist" else "Edit Gist") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    enabled = !isSubmitting,
-                    label = { Text("Description (optional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = filename,
-                    onValueChange = { filename = it },
-                    enabled = !isSubmitting,
-                    label = { Text("Filename (e.g. notes.md)") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    enabled = !isSubmitting,
-                    label = { Text("Contents") },
-                    minLines = 6,
-                    maxLines = 12,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (isCreating) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Public Gist", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = if (isPublic) "Visible to everyone" else "Secret (link only)",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(checked = isPublic, onCheckedChange = { isPublic = it }, enabled = !isSubmitting)
+    OctoFullScreenEditorScaffold(
+        title = if (isCreating) "New Gist" else "Edit Gist",
+        subtitle = filename.ifBlank { "snippet.txt" },
+        saveLabel = if (isSubmitting) "Saving..." else if (isCreating) "Create" else "Save",
+        canSave = filename.isNotBlank() && content.isNotBlank(),
+        isSubmitting = isSubmitting,
+        errorMsg = errorMsg,
+        bodyValue = content,
+        onBodyChange = { content = it },
+        bodyLabel = "Contents",
+        useMonospace = true,
+        supportsMarkdownPreview = filename.trim().endsWith(".md", ignoreCase = true),
+        metadataSummary = if (isCreating) {
+            null
+        } else {
+            buildString {
+                append(filename.ifBlank { "snippet.txt" })
+                if (description.isNotBlank()) append(" · $description")
+            }
+        },
+        initiallyMetadataExpanded = isCreating,
+        onDismiss = onDismiss,
+        onSave = { onSave(description, filename.trim(), content, isPublic) },
+        headerContent = {
+            OutlinedTextField(
+                value = filename,
+                onValueChange = { filename = it },
+                enabled = !isSubmitting,
+                label = { Text("Filename (e.g. notes.md)") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                enabled = !isSubmitting,
+                label = { Text("Description (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (isCreating) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Public Gist", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = if (isPublic) "Visible to everyone" else "Secret (link only)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                }
-                if (!errorMsg.isNullOrBlank()) {
-                    Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Switch(checked = isPublic, onCheckedChange = { isPublic = it }, enabled = !isSubmitting)
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                enabled = !isSubmitting && filename.isNotBlank() && content.isNotBlank(),
-                onClick = { onSave(description, filename.trim(), content, isPublic) }
-            ) {
-                Text(if (isSubmitting) "Saving..." else if (isCreating) "Create Gist" else "Save")
-            }
-        },
-        dismissButton = {
-            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
         }
     )
 }

@@ -60,6 +60,7 @@ import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.TagRef
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
+import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -455,81 +456,65 @@ internal fun CreateReleaseDialog(
     var isPrerelease by remember { mutableStateOf(false) }
     var generateNotes by remember { mutableStateOf(true) }
 
-    AlertDialog(
-        onDismissRequest = { if (!isSubmitting) onDismiss() },
-        title = { Text("Create Release") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedTextField(
-                    value = tagName,
-                    onValueChange = { tagName = it },
-                    label = { Text("Tag name (e.g. v1.2.0)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = releaseTitle,
-                    onValueChange = { releaseTitle = it },
-                    label = { Text("Release title (optional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = targetBranch,
-                    onValueChange = { targetBranch = it },
-                    label = { Text("Target branch or SHA") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = body,
-                    onValueChange = { body = it },
-                    label = { Text("Release notes (Markdown)") },
-                    minLines = 3,
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Auto-generate release notes", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = generateNotes, onCheckedChange = { generateNotes = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Pre-release", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = isPrerelease, onCheckedChange = { isPrerelease = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Save as draft", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = isDraft, onCheckedChange = { isDraft = it })
-                }
-                if (errorMsg != null) {
-                    Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-            }
+    OctoFullScreenEditorScaffold(
+        title = "Create Release",
+        subtitle = targetBranch.takeIf { it.isNotBlank() }?.let { "Target: $it" },
+        saveLabel = if (isSubmitting) "Publishing..." else if (isDraft) "Save Draft" else "Publish",
+        canSave = tagName.trim().isNotBlank(),
+        isSubmitting = isSubmitting,
+        errorMsg = errorMsg,
+        bodyValue = body,
+        onBodyChange = { body = it },
+        bodyLabel = "Release notes (Markdown)",
+        supportsMarkdownPreview = true,
+        onDismiss = onDismiss,
+        onSave = {
+            onCreate(
+                tagName.trim(),
+                releaseTitle.trim(),
+                body.trim(),
+                targetBranch.trim(),
+                isDraft,
+                isPrerelease,
+                generateNotes
+            )
         },
-        confirmButton = {
-            Button(
-                enabled = tagName.trim().isNotBlank() && !isSubmitting,
-                onClick = {
-                    onCreate(
-                        tagName.trim(),
-                        releaseTitle.trim(),
-                        body.trim(),
-                        targetBranch.trim(),
-                        isDraft,
-                        isPrerelease,
-                        generateNotes
-                    )
-                }
-            ) {
-                Text(if (isSubmitting) "Publishing..." else if (isDraft) "Save Draft" else "Publish")
+        headerContent = {
+            OutlinedTextField(
+                value = tagName,
+                onValueChange = { tagName = it },
+                enabled = !isSubmitting,
+                label = { Text("Tag name (e.g. v1.2.0)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = releaseTitle,
+                onValueChange = { releaseTitle = it },
+                enabled = !isSubmitting,
+                label = { Text("Release title (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = targetBranch,
+                onValueChange = { targetBranch = it },
+                enabled = !isSubmitting,
+                label = { Text("Target branch or SHA") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Auto-generate release notes", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = generateNotes, onCheckedChange = { generateNotes = it }, enabled = !isSubmitting)
             }
-        },
-        dismissButton = {
-            TextButton(enabled = !isSubmitting, onClick = onDismiss) {
-                Text("Cancel")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Pre-release", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = isPrerelease, onCheckedChange = { isPrerelease = it }, enabled = !isSubmitting)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Save as draft", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = isDraft, onCheckedChange = { isDraft = it }, enabled = !isSubmitting)
             }
         }
     )

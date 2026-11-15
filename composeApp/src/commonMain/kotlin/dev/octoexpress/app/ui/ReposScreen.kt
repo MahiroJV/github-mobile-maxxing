@@ -166,6 +166,7 @@ import dev.octoexpress.ui.components.GitHubMarkdown
 import dev.octoexpress.ui.components.GitHubMarkdownPreNormalized
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFilledIcons
+import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.OctoStarAmber
 import dev.octoexpress.ui.components.OctoWavyProgress
@@ -1595,9 +1596,14 @@ fun RepoDetailScreen(
         }
     }
 
-    // Android System Back navigates commit -> compare -> file -> parent dir -> repo list
+    // Android System Back navigates editor -> commit -> compare -> file -> parent dir -> repo list
     BackHandler(enabled = true) {
         when {
+            showFileEditorDialog -> if (!fileMutationBusy) showFileEditorDialog = false
+            showCreateReleaseDialog -> if (!creatingRelease) showCreateReleaseDialog = false
+            showCreateDiscussionDialog -> if (!creatingDiscussion) showCreateDiscussionDialog = false
+            showCreatePrDialog -> if (!creatingPr) showCreatePrDialog = false
+            showCreateIssueDialog -> showCreateIssueDialog = false
             activeTab == RepoDetailTab.ACTIONS && openedLogJob != null -> {
                 openedLogJob = null
                 jobLogsText = null
@@ -1733,7 +1739,8 @@ fun RepoDetailScreen(
     val headerNestedScroll = remember(headerCollapseTracker) { headerCollapseTracker.toNestedScrollConnection() }
     val repoHeaderVerticalPadding by animateDpAsState(if (headerCollapseTracker.isCollapsed) 4.dp else 12.dp)
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
         // Header
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
             Column(
@@ -2758,51 +2765,40 @@ fun RepoDetailScreen(
     }
 
     if (showCreateIssueDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateIssueDialog = false },
-            title = { Text("New Issue in ${repo.name}") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = newIssueTitle,
-                        onValueChange = { newIssueTitle = it },
-                        label = { Text("Title") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = newIssueBody,
-                        onValueChange = { newIssueBody = it },
-                        label = { Text("Description (Markdown)") },
-                        minLines = 4,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    enabled = newIssueTitle.isNotBlank(),
-                    onClick = {
-                        val title = newIssueTitle
-                        val body = newIssueBody
-                        showCreateIssueDialog = false
-                        scope.launch {
-                            container.repository.createIssue(repo.owner, repo.name, title, body)
-                                .onSuccess { createdNumber ->
-                                    newIssueTitle = ""
-                                    newIssueBody = ""
-                                    onMessage("Created Issue #$createdNumber")
-                                    onOpenIssueOrPull(IssuePullTarget(repo.owner, repo.name, createdNumber, title))
-                                }
-                                .onFailure { onMessage(it.message ?: "Failed to create issue") }
+        OctoFullScreenEditorScaffold(
+            title = "New Issue",
+            subtitle = repo.fullName,
+            saveLabel = "Create",
+            canSave = newIssueTitle.isNotBlank(),
+            isSubmitting = false,
+            bodyValue = newIssueBody,
+            onBodyChange = { newIssueBody = it },
+            bodyLabel = "Description (Markdown)",
+            supportsMarkdownPreview = true,
+            onDismiss = { showCreateIssueDialog = false },
+            onSave = {
+                val title = newIssueTitle
+                val body = newIssueBody
+                showCreateIssueDialog = false
+                scope.launch {
+                    container.repository.createIssue(repo.owner, repo.name, title, body)
+                        .onSuccess { createdNumber ->
+                            newIssueTitle = ""
+                            newIssueBody = ""
+                            onMessage("Created Issue #$createdNumber")
+                            onOpenIssueOrPull(IssuePullTarget(repo.owner, repo.name, createdNumber, title))
                         }
-                    }
-                ) {
-                    Text("Create")
+                        .onFailure { onMessage(it.message ?: "Failed to create issue") }
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { showCreateIssueDialog = false }) { Text("Cancel") }
+            headerContent = {
+                OutlinedTextField(
+                    value = newIssueTitle,
+                    onValueChange = { newIssueTitle = it },
+                    label = { Text("Title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         )
     }
@@ -3078,6 +3074,7 @@ fun RepoDetailScreen(
             }
         )
     }
+    }
 }
 
 
@@ -3097,64 +3094,48 @@ private fun CreatePullRequestDialog(
     var base by remember(initialBase) { mutableStateOf(initialBase) }
     var isDraft by remember { mutableStateOf(false) }
 
-    AlertDialog(
-        onDismissRequest = { if (!isSubmitting) onDismiss() },
-        title = { Text("New Pull Request") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RefSelectorDropdown(
-                        label = "Head",
-                        selectedRef = head,
-                        options = branches,
-                        onSelect = { head = it },
-                        modifier = Modifier.weight(1f)
-                    )
-                    RefSelectorDropdown(
-                        label = "Base",
-                        selectedRef = base,
-                        options = branches,
-                        onSelect = { base = it },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("PR Title") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+    OctoFullScreenEditorScaffold(
+        title = "New Pull Request",
+        subtitle = "${head.ifBlank { "head" }} → ${base.ifBlank { "base" }}",
+        saveLabel = if (isSubmitting) "Creating..." else "Create PR",
+        canSave = title.trim().isNotBlank() && head.isNotBlank() && base.isNotBlank(),
+        isSubmitting = isSubmitting,
+        errorMsg = errorMsg,
+        bodyValue = body,
+        onBodyChange = { body = it },
+        bodyLabel = "Description (Markdown)",
+        supportsMarkdownPreview = true,
+        onDismiss = onDismiss,
+        onSave = { onCreate(title.trim(), body.trim(), head.trim(), base.trim(), isDraft) },
+        headerContent = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RefSelectorDropdown(
+                    label = "Head",
+                    selectedRef = head,
+                    options = branches,
+                    onSelect = { head = it },
+                    modifier = Modifier.weight(1f)
                 )
-                OutlinedTextField(
-                    value = body,
-                    onValueChange = { body = it },
-                    label = { Text("Description (Markdown)") },
-                    minLines = 3,
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth()
+                RefSelectorDropdown(
+                    label = "Base",
+                    selectedRef = base,
+                    options = branches,
+                    onSelect = { base = it },
+                    modifier = Modifier.weight(1f)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Create as draft PR", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = isDraft, onCheckedChange = { isDraft = it })
-                }
-                if (errorMsg != null) {
-                    Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
             }
-        },
-        confirmButton = {
-            Button(
-                enabled = title.trim().isNotBlank() && head.isNotBlank() && base.isNotBlank() && !isSubmitting,
-                onClick = { onCreate(title.trim(), body.trim(), head.trim(), base.trim(), isDraft) }
-            ) {
-                Text(if (isSubmitting) "Creating..." else "Create PR")
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                enabled = !isSubmitting,
+                label = { Text("PR Title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Create as draft PR", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = isDraft, onCheckedChange = { isDraft = it }, enabled = !isSubmitting)
             }
-        },
-        dismissButton = {
-            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -4251,71 +4232,53 @@ private fun RepoFileEditorDialog(
     }
     var branch by remember(initialBranch) { mutableStateOf(initialBranch) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (isCreating) "Create File" else "Edit File") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedTextField(
-                    value = path,
-                    onValueChange = { path = it },
-                    enabled = isCreating && !isSubmitting,
-                    label = { Text("Path (e.g. docs/notes.md)") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    enabled = !isSubmitting,
-                    label = { Text("File contents") },
-                    minLines = 6,
-                    maxLines = 12,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = commitMessage,
-                    onValueChange = { commitMessage = it },
-                    enabled = !isSubmitting,
-                    label = { Text("Commit message") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = branch,
-                    onValueChange = { branch = it },
-                    enabled = !isSubmitting,
-                    label = { Text("Branch") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (!errorMsg.isNullOrBlank()) {
-                    Text(
-                        text = errorMsg,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
+    OctoFullScreenEditorScaffold(
+        title = if (isCreating) "Create File" else "Edit File",
+        subtitle = path.ifBlank { initialBranch },
+        saveLabel = if (isSubmitting) "Committing..." else "Commit",
+        canSave = path.trim().trimStart('/').isNotEmpty(),
+        isSubmitting = isSubmitting,
+        errorMsg = errorMsg,
+        bodyValue = content,
+        onBodyChange = { content = it },
+        bodyLabel = "File contents",
+        useMonospace = true,
+        supportsMarkdownPreview = path.trim().endsWith(".md", ignoreCase = true),
+        metadataSummary = if (isCreating) {
+            null
+        } else {
+            "${path.ifBlank { "file" }} · branch: ${branch.ifBlank { initialBranch }} · ${commitMessage.ifBlank { "Update file" }}"
         },
-        confirmButton = {
-            Button(
-                enabled = !isSubmitting && path.trim().trimStart('/').isNotEmpty(),
-                onClick = { onCommit(path.trim().trimStart('/'), content, commitMessage.trim(), branch.trim()) }
-            ) {
-                Text(if (isSubmitting) "Committing..." else "Commit changes")
-            }
-        },
-        dismissButton = {
-            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
+        initiallyMetadataExpanded = isCreating,
+        onDismiss = onDismiss,
+        onSave = { onCommit(path.trim().trimStart('/'), content, commitMessage.trim(), branch.trim()) },
+        headerContent = {
+            OutlinedTextField(
+                value = path,
+                onValueChange = { path = it },
+                enabled = isCreating && !isSubmitting,
+                label = { Text("Path (e.g. docs/notes.md)") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = commitMessage,
+                onValueChange = { commitMessage = it },
+                enabled = !isSubmitting,
+                label = { Text("Commit message") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = branch,
+                onValueChange = { branch = it },
+                enabled = !isSubmitting,
+                label = { Text("Branch") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     )
 }

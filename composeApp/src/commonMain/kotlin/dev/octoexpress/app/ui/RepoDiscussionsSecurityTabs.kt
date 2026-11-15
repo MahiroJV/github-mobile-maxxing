@@ -67,6 +67,7 @@ import dev.octoexpress.model.RepoSecurityOverview
 import dev.octoexpress.model.SecurityAdvisorySummary
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
+import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -543,57 +544,40 @@ internal fun CreateDiscussionDialog(
     var title by remember { mutableStateOf("") }
     var body by remember { mutableStateOf("") }
 
-    AlertDialog(
-        onDismissRequest = { if (!isSubmitting) onDismiss() },
-        title = { Text("New Discussion") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+    OctoFullScreenEditorScaffold(
+        title = "New Discussion",
+        saveLabel = if (isSubmitting) "Creating..." else "Create",
+        canSave = selectedCategoryId.isNotBlank() && title.trim().isNotBlank(),
+        isSubmitting = isSubmitting,
+        errorMsg = errorMsg,
+        bodyValue = body,
+        onBodyChange = { body = it },
+        bodyLabel = "Body (Markdown)",
+        supportsMarkdownPreview = true,
+        onDismiss = onDismiss,
+        onSave = { onCreate(selectedCategoryId, title.trim(), body.trim()) },
+        headerContent = {
+            Text("Category", style = MaterialTheme.typography.labelLarge)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Category", style = MaterialTheme.typography.labelLarge)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    categories.forEach { cat ->
-                        FilterChip(
-                            selected = selectedCategoryId == cat.id,
-                            onClick = { selectedCategoryId = cat.id },
-                            label = { Text(cat.name) }
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Title") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = body,
-                    onValueChange = { body = it },
-                    label = { Text("Body (Markdown)") },
-                    minLines = 3,
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (errorMsg != null) {
-                    Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                categories.forEach { cat ->
+                    FilterChip(
+                        selected = selectedCategoryId == cat.id,
+                        onClick = { selectedCategoryId = cat.id },
+                        label = { Text(cat.name) }
+                    )
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                enabled = selectedCategoryId.isNotBlank() && title.trim().isNotBlank() && !isSubmitting,
-                onClick = { onCreate(selectedCategoryId, title.trim(), body.trim()) }
-            ) {
-                Text(if (isSubmitting) "Creating..." else "Create")
-            }
-        },
-        dismissButton = {
-            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                enabled = !isSubmitting,
+                label = { Text("Title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     )
 }
