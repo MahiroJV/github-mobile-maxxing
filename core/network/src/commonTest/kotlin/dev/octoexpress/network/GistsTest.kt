@@ -141,4 +141,40 @@ class GistsTest {
         repo.deleteGist("g2").getOrThrow()
         assertNull(repo.peekGistDetail("g2"))
     }
+
+    @Test
+    fun `gist 404 surfaces missing gist scope guidance and normalizes gist url id`() = runTest {
+        val seenPaths = mutableListOf<String>()
+        val engine = MockEngine { req ->
+            seenPaths += req.url.encodedPath
+            when (req.url.encodedPath) {
+                "/gists/starred" -> respond(
+                    content = """{"message":"Not Found"}""",
+                    status = HttpStatusCode.NotFound,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/gists/abc123" -> respond(
+                    content = """{"id":"abc123","description":"URL id gist","public":true,"html_url":"https://gist.github.com/octocat/abc123","owner":{"login":"octocat"},"files":{"a.txt":{"filename":"a.txt","size":2,"content":"hi"}}}""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/gists/abc123/star" -> respond("", HttpStatusCode.NotFound)
+                else -> error("Unexpected ${req.method} ${req.url.encodedPath}")
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(jsonCodec) }
+        }
+        val sessionManager = SessionManager(GistsTestTokenStore(), DeviceFlowClient(httpClient))
+        sessionManager.initialize()
+        val repo = GitHubRepository(sessionManager, httpClient = httpClient)
+
+        val err = repo.getGists(starred = true).exceptionOrNull()
+        assertTrue(err is GitHubApiException && err.statusCode == 404)
+        assertTrue(err.message.contains("gist", ignoreCase = true))
+
+        val detail = repo.getGistDetail("https://gist.github.com/octocat/abc123/").getOrThrow()
+        assertEquals("abc123", detail.summary.id)
+        assertTrue("/gists/abc123" in seenPaths)
+    }
 }

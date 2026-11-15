@@ -1427,7 +1427,7 @@ class GitHubRestService(
     ): List<GistSummary> {
         val url = when {
             starred -> "$baseUrl/gists/starred"
-            !userLogin.isNullOrBlank() -> "$baseUrl/users/${userLogin.trim()}/gists"
+            !userLogin.isNullOrBlank() -> "$baseUrl/users/${userLogin.trim().encodeURLPathPart()}/gists"
             else -> "$baseUrl/gists"
         }
         val res = httpClient.get(url) {
@@ -1435,19 +1435,20 @@ class GitHubRestService(
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to load gists (${res.status.value})")
+            throw gistApiException(res.status.value, "load gists")
         }
         return res.body<List<RestGistDto>>().map { it.toGistSummary() }
     }
 
     suspend fun fetchGistDetail(gistId: String): GistDetail {
-        val res = httpClient.get("$baseUrl/gists/$gistId")
+        val encodedId = normalizeGistId(gistId).encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/gists/$encodedId")
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to load gist (${res.status.value})")
+            throw gistApiException(res.status.value, "load gist")
         }
         val dto = res.body<RestGistDto>()
         val isStarred = runCatching {
-            httpClient.get("$baseUrl/gists/$gistId/star").status.value == 204
+            httpClient.get("$baseUrl/gists/$encodedId/star").status.value == 204
         }.getOrDefault(false)
         return dto.toGistDetail(viewerHasStarred = isStarred)
     }
@@ -1472,7 +1473,7 @@ class GitHubRestService(
             )
         }
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to create gist (${res.status.value})")
+            throw gistApiException(res.status.value, "create gist")
         }
         return res.body<RestGistDto>().toGistDetail(viewerHasStarred = false)
     }
@@ -1482,10 +1483,11 @@ class GitHubRestService(
         description: String? = null,
         updatedFiles: Map<String, String?>
     ): GistDetail {
+        val encodedId = normalizeGistId(gistId).encodeURLPathPart()
         val payloadFiles = updatedFiles.mapValues { (_, body) ->
             body?.let { CreateOrUpdateGistFileRequest(content = it) }
         }
-        val res = httpClient.patch("$baseUrl/gists/$gistId") {
+        val res = httpClient.patch("$baseUrl/gists/$encodedId") {
             contentType(ContentType.Application.Json)
             setBody(
                 UpdateGistRequest(
@@ -1495,28 +1497,48 @@ class GitHubRestService(
             )
         }
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to update gist (${res.status.value})")
+            throw gistApiException(res.status.value, "update gist")
         }
         val dto = res.body<RestGistDto>()
         val isStarred = runCatching {
-            httpClient.get("$baseUrl/gists/$gistId/star").status.value == 204
+            httpClient.get("$baseUrl/gists/$encodedId/star").status.value == 204
         }.getOrDefault(false)
         return dto.toGistDetail(viewerHasStarred = isStarred)
     }
 
     suspend fun setGistStarred(gistId: String, starred: Boolean) {
-        val url = "$baseUrl/gists/$gistId/star"
-        val res = if (starred) httpClient.put(url) else httpClient.delete(url)
+        val encodedId = normalizeGistId(gistId).encodeURLPathPart()
+        val url = "$baseUrl/gists/$encodedId/star"
+        val res = if (starred) {
+            httpClient.put(url) {
+                header(HttpHeaders.ContentLength, "0")
+            }
+        } else {
+            httpClient.delete(url)
+        }
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to update gist star (${res.status.value})")
+            throw gistApiException(res.status.value, "update gist star")
         }
     }
 
     suspend fun deleteGist(gistId: String) {
-        val res = httpClient.delete("$baseUrl/gists/$gistId")
+        val encodedId = normalizeGistId(gistId).encodeURLPathPart()
+        val res = httpClient.delete("$baseUrl/gists/$encodedId")
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to delete gist (${res.status.value})")
+            throw gistApiException(res.status.value, "delete gist")
         }
+    }
+
+    private fun normalizeGistId(rawId: String): String =
+        rawId.trim().trimEnd('/').substringAfterLast('/')
+
+    private fun gistApiException(statusCode: Int, action: String): GitHubApiException {
+        val message = if (statusCode == 404) {
+            "Failed to $action (404). Your token may lack the 'gist' scope — sign out and sign in again (or add 'gist' scope)."
+        } else {
+            "Failed to $action ($statusCode)"
+        }
+        return GitHubApiException(statusCode, message)
     }
 
     private fun RestGistDto.toGistSummary(): GistSummary = GistSummary(

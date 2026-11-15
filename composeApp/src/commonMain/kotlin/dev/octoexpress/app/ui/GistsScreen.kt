@@ -68,6 +68,7 @@ import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Trash2
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.auth.openUrlInBrowser
+import dev.octoexpress.model.AuthMethod
 import dev.octoexpress.model.GistDetail
 import dev.octoexpress.model.GistSummary
 import dev.octoexpress.ui.components.CodeViewer
@@ -271,6 +272,26 @@ fun GistsScreen(
                         Spacer(Modifier.height(6.dp))
                         OctoWavyProgress()
                     }
+                }
+            }
+
+            val missingGistScope = targetUser == null &&
+                session?.authMethod == AuthMethod.DEVICE_FLOW &&
+                session?.scope
+                    ?.split(' ', ',')
+                    ?.map { it.trim().lowercase() }
+                    ?.contains("gist") == false
+            if (missingGistScope) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Your current sign-in token lacks 'gist' scope. Sign out in Settings and sign in again to create, edit, star, or view secret Gists.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
                 }
             }
 

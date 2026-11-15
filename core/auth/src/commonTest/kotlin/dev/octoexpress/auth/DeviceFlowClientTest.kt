@@ -30,20 +30,25 @@ class DeviceFlowClientTest {
     fun deviceFlowHandlesPendingSlowDownAndSuccess() = runTest {
         var tokenPollAttempt = 0
         val recordedDelays = mutableListOf<Long>()
+        var requestedDeviceScope: String? = null
         val engine = MockEngine { request ->
             val path = request.url.encodedPath
             when (path) {
-                "/login/device/code" -> respond(
-                    content = """{"device_code":"dev_123","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}""",
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/json")
-                )
+                "/login/device/code" -> {
+                    requestedDeviceScope = (request.body as? io.ktor.client.request.forms.FormDataContent)
+                        ?.formData?.get("scope")
+                    respond(
+                        content = """{"device_code":"dev_123","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json")
+                    )
+                }
                 "/login/oauth/access_token" -> {
                     tokenPollAttempt++
                     val payload = when (tokenPollAttempt) {
                         1 -> """{"error":"authorization_pending"}"""
                         2 -> """{"error":"slow_down","interval":10}"""
-                        else -> """{"access_token":"gho_test_token","token_type":"bearer","scope":"repo notifications"}"""
+                        else -> """{"access_token":"gho_test_token","token_type":"bearer","scope":"repo gist notifications"}"""
                     }
                     respond(
                         content = payload,
@@ -68,6 +73,8 @@ class DeviceFlowClientTest {
         val states = client.startDeviceFlow("Ov23liTestClient").toList()
 
         assertIs<DeviceCodeState.RequestingCode>(states[0])
+        assertTrue(requestedDeviceScope?.split(' ')?.contains("gist") == true)
+        assertTrue(DeviceFlowClient.DEFAULT_OAUTH_SCOPE.split(' ').contains("gist"))
         val firstAwait = assertIs<DeviceCodeState.AwaitingUser>(states[1])
         assertEquals("ABCD-EFGH", firstAwait.userCode)
         assertEquals(listOf(5000L, 5000L, 10000L), recordedDelays)

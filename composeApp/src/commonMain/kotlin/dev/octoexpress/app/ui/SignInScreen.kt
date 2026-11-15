@@ -412,7 +412,7 @@ fun SignInScreen(
                                         visualTransformation = PasswordVisualTransformation(),
                                         leadingIcon = { Icon(Lucide.KeyRound, contentDescription = null) },
                                         supportingText = {
-                                            Text("Requires repo, notifications, read:user scopes.")
+                                            Text("Requires repo, gist, notifications, read:user scopes.")
                                         },
                                         modifier = Modifier.fillMaxWidth()
                                     )

@@ -209,11 +209,15 @@ class DeviceFlowClient(
                 Result.failure(IllegalStateException("GitHub returned HTTP ${response.status.value}. Check token scopes."))
             } else {
                 val user = response.body<PatUserCheckDto>()
+                val resolvedScope = response.headers["X-OAuth-Scopes"]
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: "pat"
                 Result.success(
                     AuthSession(
                         accessToken = token,
                         tokenType = "bearer",
-                        scope = "pat",
+                        scope = resolvedScope,
                         authMethod = AuthMethod.PERSONAL_ACCESS_TOKEN,
                         userLogin = user.login
                     )
@@ -237,7 +241,7 @@ class DeviceFlowClient(
     }
 
     companion object {
-        const val DEFAULT_OAUTH_SCOPE = "repo notifications read:user read:org"
+        const val DEFAULT_OAUTH_SCOPE = "repo gist notifications read:user read:org"
 
         fun defaultAuthHttpClient(): HttpClient = HttpClient {
             install(ContentNegotiation) {
