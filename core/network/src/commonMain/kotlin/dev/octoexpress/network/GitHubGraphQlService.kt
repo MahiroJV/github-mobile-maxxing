@@ -18,6 +18,7 @@ import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.LabelTag
 import dev.octoexpress.model.MilestoneSummary
+import dev.octoexpress.model.ReactionSummary
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.TimelineEvent
@@ -237,6 +238,7 @@ class GitHubGraphQlService(
                     labels(first: 10) { nodes { name color description } }
                     assignees(first: 6) { nodes { login avatarUrl url } }
                     milestone { number title description state dueOn }
+                    reactionGroups { content viewerHasReacted reactors { totalCount } }
                     timelineItems(first: 50, itemTypes: [ISSUE_COMMENT, CLOSED_EVENT, REOPENED_EVENT]) {
                       nodes {
                         __typename
@@ -245,7 +247,10 @@ class GitHubGraphQlService(
                           createdAt
                           body
                           authorAssociation
+                          viewerCanUpdate
+                          viewerCanDelete
                           author { login avatarUrl url }
+                          reactionGroups { content viewerHasReacted reactors { totalCount } }
                         }
                         ... on ClosedEvent {
                           id
@@ -272,6 +277,7 @@ class GitHubGraphQlService(
                     createdAt
                     updatedAt
                     headRefName
+                    headRefOid
                     baseRefName
                     additions
                     deletions
@@ -281,7 +287,15 @@ class GitHubGraphQlService(
                     author { login avatarUrl url }
                     labels(first: 10) { nodes { name color description } }
                     assignees(first: 6) { nodes { login avatarUrl url } }
+                    reviewRequests(first: 10) {
+                      nodes {
+                        requestedReviewer {
+                          ... on User { login avatarUrl url }
+                        }
+                      }
+                    }
                     milestone { number title description state dueOn }
+                    reactionGroups { content viewerHasReacted reactors { totalCount } }
                     commits(last: 1) {
                       nodes {
                         commit {
@@ -297,7 +311,10 @@ class GitHubGraphQlService(
                           createdAt
                           body
                           authorAssociation
+                          viewerCanUpdate
+                          viewerCanDelete
                           author { login avatarUrl url }
+                          reactionGroups { content viewerHasReacted reactors { totalCount } }
                         }
                         ... on PullRequestReview {
                           id
@@ -368,7 +385,10 @@ class GitHubGraphQlService(
                     createdAt = obj.str("createdAt") ?: "",
                     author = parseUser(obj.obj("author")),
                     body = obj.str("body") ?: "",
-                    authorAssociation = obj.str("authorAssociation")
+                    authorAssociation = obj.str("authorAssociation"),
+                    reactions = parseReactionGroups(obj.arr("reactionGroups")),
+                    viewerCanUpdate = obj.bool("viewerCanUpdate") ?: false,
+                    viewerCanDelete = obj.bool("viewerCanDelete") ?: false
                 )
                 "PullRequestReview" -> TimelineEvent.ReviewEventItem(
                     id = obj.str("id") ?: "",
@@ -426,6 +446,11 @@ class GitHubGraphQlService(
             } else null
         }
 
+        val requestedReviewers = item.obj("reviewRequests")?.arr("nodes").orEmpty().mapNotNull { el ->
+            val reviewer = (el as? JsonObject)?.obj("requestedReviewer") ?: return@mapNotNull null
+            if (reviewer.str("login").isNullOrBlank()) null else parseUser(reviewer)
+        }
+
         return IssueOrPullDetail(
             id = item.str("id") ?: "",
             number = item.int("number") ?: number,
@@ -457,8 +482,80 @@ class GitHubGraphQlService(
             viewerCanUpdate = viewerCanUpdate,
             viewerCanCloseOrReopen = viewerCanUpdate || canTriage,
             viewerCanMerge = canWrite,
-            viewerCanEditMetadata = canTriage
+            viewerCanEditMetadata = canTriage,
+            headRefOid = item.str("headRefOid"),
+            reactions = parseReactionGroups(item.arr("reactionGroups")),
+            requestedReviewers = requestedReviewers
         )
+    }
+
+    suspend fun toggleReaction(
+        subjectId: String,
+        content: String,
+        currentlyReacted: Boolean
+    ): Boolean {
+        val safeContent = content.uppercase()
+        require(safeContent in VALID_REACTION_CONTENTS) { "Unsupported reaction: $content" }
+        val op = if (currentlyReacted) "removeReaction" else "addReaction"
+        val mutation = """
+            mutation(${"$"}subjectId: ID!) {
+              $op(input: { subjectId: ${"$"}subjectId, content: $safeContent }) {
+                reaction { content }
+              }
+            }
+        """.trimIndent()
+        execute(mutation, mapOf("subjectId" to subjectId))
+        return !currentlyReacted
+    }
+
+    suspend fun updateIssueComment(commentId: String, body: String) {
+        val mutation = """
+            mutation(${"$"}id: ID!, ${"$"}body: String!) {
+              updateIssueComment(input: { id: ${"$"}id, body: ${"$"}body }) {
+                issueComment { id }
+              }
+            }
+        """.trimIndent()
+        execute(mutation, mapOf("id" to commentId, "body" to body))
+    }
+
+    suspend fun deleteIssueComment(commentId: String) {
+        val mutation = """
+            mutation(${"$"}id: ID!) {
+              deleteIssueComment(input: { id: ${"$"}id }) {
+                clientMutationId
+              }
+            }
+        """.trimIndent()
+        execute(mutation, mapOf("id" to commentId))
+    }
+
+    suspend fun setPullRequestDraftState(pullRequestId: String, draft: Boolean) {
+        val op = if (draft) "convertPullRequestToDraft" else "markPullRequestReadyForReview"
+        val mutation = """
+            mutation(${"$"}pullRequestId: ID!) {
+              $op(input: { pullRequestId: ${"$"}pullRequestId }) {
+                pullRequest { id isDraft }
+              }
+            }
+        """.trimIndent()
+        execute(mutation, mapOf("pullRequestId" to pullRequestId))
+    }
+
+    private fun parseReactionGroups(array: JsonArray?): List<ReactionSummary> {
+        if (array == null) return emptyList()
+        return array.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val content = obj.str("content") ?: return@mapNotNull null
+            val count = obj.obj("reactors")?.int("totalCount") ?: 0
+            val viewerReacted = obj.bool("viewerHasReacted") ?: false
+            if (count <= 0 && !viewerReacted) return@mapNotNull null
+            ReactionSummary(
+                content = content,
+                count = count,
+                viewerHasReacted = viewerReacted
+            )
+        }
     }
 
     suspend fun fetchViewerRepositories(): List<RepoSummary> {
@@ -1003,6 +1100,9 @@ class GitHubGraphQlService(
     companion object {
         private val TRIAGE_OR_HIGHER_PERMS = setOf("ADMIN", "MAINTAIN", "WRITE", "TRIAGE")
         private val WRITE_OR_HIGHER_PERMS = setOf("ADMIN", "MAINTAIN", "WRITE")
+        private val VALID_REACTION_CONTENTS = setOf(
+            "THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"
+        )
 
         private const val REPO_FIELDS = """
             id

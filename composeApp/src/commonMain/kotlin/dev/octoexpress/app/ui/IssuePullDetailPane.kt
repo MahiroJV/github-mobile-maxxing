@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -27,6 +28,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -72,6 +75,7 @@ import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Tag
+import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
@@ -85,6 +89,7 @@ import dev.octoexpress.model.LabelTag
 import dev.octoexpress.model.MergeMethod
 import dev.octoexpress.model.MilestoneSummary
 import dev.octoexpress.model.PullFileChange
+import dev.octoexpress.model.ReactionSummary
 import dev.octoexpress.model.ReviewEvent
 import dev.octoexpress.model.TimelineEvent
 import dev.octoexpress.model.UserSummary
@@ -152,6 +157,15 @@ fun IssuePullDetailPane(
     var selectedMilestoneNumber by remember(target) { mutableStateOf<Int?>(null) }
 
     val scope = rememberCoroutineScope()
+
+    var pendingDiffCommentTarget by remember(target) { mutableStateOf<Triple<String, Int?, String>?>(null) }
+    var diffCommentBody by remember { mutableStateOf("") }
+    var editingComment by remember { mutableStateOf<TimelineEvent.CommentEvent?>(null) }
+    var editingCommentBody by remember { mutableStateOf("") }
+    var deletingComment by remember { mutableStateOf<TimelineEvent.CommentEvent?>(null) }
+    var showReviewersDialog by remember { mutableStateOf(false) }
+    var selectedReviewerLogins by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var customReviewerLogin by remember { mutableStateOf("") }
 
     fun loadDetail(forceRefresh: Boolean = false) {
         scope.launch {
@@ -329,11 +343,37 @@ fun IssuePullDetailPane(
                                                 .onSuccess { availableMilestones = it }
                                                 .onFailure { onMessage(it.message ?: "Failed to load milestones") }
                                         }
+                                    },
+                                    onRequestReviewers = {
+                                        selectedReviewerLogins = item.requestedReviewers.map { it.login }.toSet()
+                                        customReviewerLogin = ""
+                                        showReviewersDialog = true
+                                        if (availableAssignees.isEmpty()) {
+                                            scope.launch {
+                                                container.repository.getRepoAssignees(target.owner, target.repo)
+                                                    .onSuccess { availableAssignees = it }
+                                            }
+                                        }
+                                    },
+                                    onToggleDraft = {
+                                        scope.launch {
+                                            actionBusy = true
+                                            val nextDraft = !item.isDraft
+                                            container.repository.setPullRequestDraftState(
+                                                target.owner, target.repo, target.number, item.id, nextDraft
+                                            ).onSuccess {
+                                                onMessage(if (nextDraft) "Converted PR to draft" else "Marked PR ready for review")
+                                                loadDetail(forceRefresh = true)
+                                            }.onFailure {
+                                                onMessage(it.message ?: "Failed to update draft state")
+                                            }
+                                            actionBusy = false
+                                        }
                                     }
                                 )
                             }
 
-                            if (item.body.isNotBlank()) {
+                            if (item.body.isNotBlank() || item.reactions.isNotEmpty() || item.viewerCanUpdate) {
                                 item {
                                     ElevatedCard(
                                         shape = MaterialTheme.shapes.large,
@@ -357,8 +397,27 @@ fun IssuePullDetailPane(
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
-                                            Spacer(Modifier.height(12.dp))
-                                            GitHubMarkdown(item.body)
+                                            if (item.body.isNotBlank()) {
+                                                Spacer(Modifier.height(12.dp))
+                                                GitHubMarkdown(item.body)
+                                            }
+                                            Spacer(Modifier.height(10.dp))
+                                            ReactionsBar(
+                                                reactions = item.reactions,
+                                                enabled = !actionBusy,
+                                                onToggleReaction = { content, currentlyReacted ->
+                                                    scope.launch {
+                                                        container.repository.toggleReaction(
+                                                            target.owner, target.repo, target.number,
+                                                            item.id, content, currentlyReacted
+                                                        ).onSuccess {
+                                                            loadDetail(forceRefresh = true)
+                                                        }.onFailure {
+                                                            onMessage(it.message ?: "Reaction failed")
+                                                        }
+                                                    }
+                                                }
+                                            )
                                         }
                                     }
                                 }
@@ -369,7 +428,27 @@ fun IssuePullDetailPane(
                                 key = { it.id },
                                 contentType = { it::class }
                             ) { event ->
-                                TimelineItemCard(event)
+                                TimelineItemCard(
+                                    event = event,
+                                    actionBusy = actionBusy,
+                                    onToggleReaction = { subjectId, content, reacted ->
+                                        scope.launch {
+                                            container.repository.toggleReaction(
+                                                target.owner, target.repo, target.number,
+                                                subjectId, content, reacted
+                                            ).onSuccess {
+                                                loadDetail(forceRefresh = true)
+                                            }.onFailure {
+                                                onMessage(it.message ?: "Reaction failed")
+                                            }
+                                        }
+                                    },
+                                    onEditComment = { c ->
+                                        editingCommentBody = c.body
+                                        editingComment = c
+                                    },
+                                    onDeleteComment = { c -> deletingComment = c }
+                                )
                             }
                         }
                     } else if (selectedTab == DetailTab.CHECKS) {
@@ -509,7 +588,23 @@ fun IssuePullDetailPane(
                                 diffFileLazyItems(
                                     file = file,
                                     expanded = isExpanded,
-                                    onToggleExpand = { expandedFiles[file.filename] = !isExpanded }
+                                    onToggleExpand = { expandedFiles[file.filename] = !isExpanded },
+                                    onCommentFile = if (!item.headRefOid.isNullOrBlank()) {
+                                        {
+                                            diffCommentBody = ""
+                                            pendingDiffCommentTarget = Triple(file.filename, null, "RIGHT")
+                                        }
+                                    } else null,
+                                    onClickLine = if (!item.headRefOid.isNullOrBlank()) {
+                                        { line ->
+                                            val side = if (line.kind == dev.octoexpress.model.DiffLineKind.REMOVED) "LEFT" else "RIGHT"
+                                            val lineNum = if (side == "LEFT") line.oldLineNumber else line.newLineNumber
+                                            if (lineNum != null) {
+                                                diffCommentBody = ""
+                                                pendingDiffCommentTarget = Triple(file.filename, lineNum, side)
+                                            }
+                                        }
+                                    } else null
                                 )
                             }
                         }
@@ -1053,6 +1148,233 @@ fun IssuePullDetailPane(
             }
         )
     }
+
+    pendingDiffCommentTarget?.let { (filePath, lineNum, side) ->
+        val commitSha = detail?.headRefOid
+        AlertDialog(
+            onDismissRequest = { pendingDiffCommentTarget = null },
+            title = {
+                Text(
+                    if (lineNum != null) "Review Comment: ${filePath.substringAfterLast('/')}:$lineNum"
+                    else "File Comment: ${filePath.substringAfterLast('/')}"
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = diffCommentBody,
+                    onValueChange = { diffCommentBody = it },
+                    label = { Text("Comment (Markdown)") },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = diffCommentBody.trim().isNotBlank() && !commitSha.isNullOrBlank() && !actionBusy,
+                    onClick = {
+                        val bodyToPost = diffCommentBody.trim()
+                        val sha = commitSha ?: return@Button
+                        pendingDiffCommentTarget = null
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.createPullDiffComment(
+                                owner = target.owner,
+                                repo = target.repo,
+                                number = target.number,
+                                commitId = sha,
+                                path = filePath,
+                                body = bodyToPost,
+                                line = lineNum,
+                                side = side
+                            ).onSuccess {
+                                onMessage("Added inline diff comment")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to post diff comment")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) { Text("Post") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDiffCommentTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    editingComment?.let { c ->
+        AlertDialog(
+            onDismissRequest = { editingComment = null },
+            title = { Text("Edit Comment") },
+            text = {
+                OutlinedTextField(
+                    value = editingCommentBody,
+                    onValueChange = { editingCommentBody = it },
+                    label = { Text("Comment body") },
+                    minLines = 3,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = editingCommentBody.trim().isNotBlank() && !actionBusy,
+                    onClick = {
+                        val newBody = editingCommentBody.trim()
+                        editingComment = null
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.updateIssueComment(
+                                target.owner, target.repo, target.number, c.id, newBody
+                            ).onSuccess {
+                                onMessage("Updated comment")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to update comment")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingComment = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    deletingComment?.let { c ->
+        AlertDialog(
+            onDismissRequest = { deletingComment = null },
+            title = { Text("Delete Comment?") },
+            text = { Text("Are you sure you want to delete this comment by @${c.author.login}?") },
+            confirmButton = {
+                Button(
+                    enabled = !actionBusy,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    onClick = {
+                        deletingComment = null
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.deleteIssueComment(
+                                target.owner, target.repo, target.number, c.id
+                            ).onSuccess {
+                                onMessage("Deleted comment")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to delete comment")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingComment = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showReviewersDialog) {
+        AlertDialog(
+            onDismissRequest = { showReviewersDialog = false },
+            title = { Text("Request Reviewers") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = customReviewerLogin,
+                            onValueChange = { customReviewerLogin = it },
+                            label = { Text("GitHub username") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilledTonalIconButton(
+                            enabled = customReviewerLogin.trim().isNotBlank(),
+                            onClick = {
+                                val login = customReviewerLogin.trim().removePrefix("@")
+                                if (login.isNotBlank()) {
+                                    selectedReviewerLogins = selectedReviewerLogins + login
+                                    customReviewerLogin = ""
+                                }
+                            }
+                        ) {
+                            Icon(Lucide.Plus, contentDescription = "Add reviewer")
+                        }
+                    }
+                    if (availableAssignees.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            availableAssignees.forEach { user ->
+                                val checked = user.login in selectedReviewerLogins
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedReviewerLogins = if (checked) {
+                                                selectedReviewerLogins - user.login
+                                            } else {
+                                                selectedReviewerLogins + user.login
+                                            }
+                                        }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = { isChecked ->
+                                            selectedReviewerLogins = if (isChecked) {
+                                                selectedReviewerLogins + user.login
+                                            } else {
+                                                selectedReviewerLogins - user.login
+                                            }
+                                        }
+                                    )
+                                    UserAvatar(user.avatarUrl, user.login, sizeDp = 24)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("@${user.login}", style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = selectedReviewerLogins.isNotEmpty() && !actionBusy,
+                    onClick = {
+                        val reviewers = selectedReviewerLogins.toList()
+                        showReviewersDialog = false
+                        scope.launch {
+                            actionBusy = true
+                            container.repository.requestPullReviewers(
+                                target.owner, target.repo, target.number, reviewers
+                            ).onSuccess {
+                                onMessage("Requested reviewers: ${reviewers.joinToString(", ")}")
+                                loadDetail(forceRefresh = true)
+                            }.onFailure {
+                                onMessage(it.message ?: "Failed to request reviewers")
+                            }
+                            actionBusy = false
+                        }
+                    }
+                ) { Text("Request") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReviewersDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1061,7 +1383,9 @@ private fun DetailHeaderCard(
     item: IssueOrPullDetail,
     onEditLabels: () -> Unit,
     onEditAssignees: () -> Unit,
-    onEditMilestone: () -> Unit
+    onEditMilestone: () -> Unit,
+    onRequestReviewers: () -> Unit,
+    onToggleDraft: () -> Unit
 ) {
     val (stateLabel, stateBg, stateFg) = when {
         item.isDraft -> Triple(
@@ -1215,6 +1539,126 @@ private fun DetailHeaderCard(
                         leadingIcon = { Icon(Lucide.Flag, contentDescription = null, modifier = Modifier.size(14.dp)) },
                         label = { Text(item.milestone?.title ?: "Milestone") }
                     )
+                    if (item.kind == IssueOrPullKind.PULL_REQUEST && item.state == IssueOrPullState.OPEN) {
+                        AssistChip(
+                            onClick = onRequestReviewers,
+                            leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                            label = { Text("Reviewers (${item.requestedReviewers.size})") }
+                        )
+                        if (item.viewerCanUpdate) {
+                            AssistChip(
+                                onClick = onToggleDraft,
+                                leadingIcon = { Icon(Lucide.Pencil, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                                label = { Text(if (item.isDraft) "Ready for review" else "Convert to draft") }
+                            )
+                        }
+                    }
+                }
+            }
+            if (item.requestedReviewers.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        "Reviewers:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    item.requestedReviewers.forEach { reviewer ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            UserAvatar(reviewer.avatarUrl, reviewer.login, sizeDp = 18)
+                            Text("@${reviewer.login}", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val REACTION_EMOJIS = listOf(
+    "THUMBS_UP" to "👍",
+    "THUMBS_DOWN" to "👎",
+    "LAUGH" to "😄",
+    "HOORAY" to "🎉",
+    "CONFUSED" to "😕",
+    "HEART" to "❤️",
+    "ROCKET" to "🚀",
+    "EYES" to "👀"
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReactionsBar(
+    reactions: List<ReactionSummary>,
+    enabled: Boolean,
+    onToggleReaction: (content: String, currentlyReacted: Boolean) -> Unit
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    val emojiLookup = remember { REACTION_EMOJIS.toMap() }
+    val reactionByContent = remember(reactions) { reactions.associateBy { it.content } }
+
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        reactions.filter { it.count > 0 || it.viewerHasReacted }.forEach { reaction ->
+            val emoji = emojiLookup[reaction.content] ?: reaction.content
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = if (reaction.viewerHasReacted) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+                modifier = Modifier.clickable(enabled = enabled) {
+                    onToggleReaction(reaction.content, reaction.viewerHasReacted)
+                }
+            ) {
+                Text(
+                    text = "$emoji ${reaction.count}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (reaction.viewerHasReacted) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+        Box {
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.clickable(enabled = enabled) { showPicker = true }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Icon(Lucide.Plus, contentDescription = "Add reaction", modifier = Modifier.size(12.dp))
+                    Text("React", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            DropdownMenu(expanded = showPicker, onDismissRequest = { showPicker = false }) {
+                REACTION_EMOJIS.forEach { (contentKey, emoji) ->
+                    val alreadyReacted = reactionByContent[contentKey]?.viewerHasReacted == true
+                    DropdownMenuItem(
+                        text = { Text("$emoji  ${contentKey.lowercase().replace('_', ' ')}") },
+                        trailingIcon = if (alreadyReacted) {
+                            { Icon(Lucide.Check, contentDescription = "Reacted", modifier = Modifier.size(14.dp)) }
+                        } else null,
+                        onClick = {
+                            showPicker = false
+                            onToggleReaction(contentKey, alreadyReacted)
+                        }
+                    )
                 }
             }
         }
@@ -1222,7 +1666,13 @@ private fun DetailHeaderCard(
 }
 
 @Composable
-private fun TimelineItemCard(event: TimelineEvent) {
+private fun TimelineItemCard(
+    event: TimelineEvent,
+    actionBusy: Boolean = false,
+    onToggleReaction: (subjectId: String, content: String, currentlyReacted: Boolean) -> Unit = { _, _, _ -> },
+    onEditComment: (TimelineEvent.CommentEvent) -> Unit = {},
+    onDeleteComment: (TimelineEvent.CommentEvent) -> Unit = {}
+) {
     when (event) {
         is TimelineEvent.CommentEvent -> {
             Card(
@@ -1247,6 +1697,29 @@ private fun TimelineItemCard(event: TimelineEvent) {
                             )
                         }
                         Spacer(Modifier.weight(1f))
+                        if (event.viewerCanUpdate) {
+                            IconButton(
+                                onClick = { onEditComment(event) },
+                                enabled = !actionBusy,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Lucide.Pencil, contentDescription = "Edit comment", modifier = Modifier.size(14.dp))
+                            }
+                        }
+                        if (event.viewerCanDelete) {
+                            IconButton(
+                                onClick = { onDeleteComment(event) },
+                                enabled = !actionBusy,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    Lucide.Trash2,
+                                    contentDescription = "Delete comment",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
                         Text(
                             text = event.createdAt.take(10),
                             style = MaterialTheme.typography.labelSmall,
@@ -1255,6 +1728,14 @@ private fun TimelineItemCard(event: TimelineEvent) {
                     }
                     Spacer(Modifier.height(10.dp))
                     GitHubMarkdown(event.body)
+                    Spacer(Modifier.height(8.dp))
+                    ReactionsBar(
+                        reactions = event.reactions,
+                        enabled = !actionBusy,
+                        onToggleReaction = { content, reacted ->
+                            onToggleReaction(event.id, content, reacted)
+                        }
+                    )
                 }
             }
         }

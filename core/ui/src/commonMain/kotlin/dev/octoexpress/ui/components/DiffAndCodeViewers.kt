@@ -22,6 +22,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -46,6 +47,7 @@ import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.FileCode
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.MessageSquarePlus
 import dev.octoexpress.model.DiffLine
 import dev.octoexpress.model.DiffLineKind
 import dev.octoexpress.model.FileChangeStatus
@@ -57,13 +59,16 @@ import dev.octoexpress.model.PullFileChange
 fun LazyListScope.diffFileLazyItems(
     file: PullFileChange,
     expanded: Boolean,
-    onToggleExpand: () -> Unit
+    onToggleExpand: () -> Unit,
+    onCommentFile: (() -> Unit)? = null,
+    onClickLine: ((DiffLine) -> Unit)? = null
 ) {
     item(key = "diff_hdr_${file.filename}", contentType = "diff_header") {
         DiffFileHeaderRow(
             file = file,
             expanded = expanded,
-            onToggleExpand = onToggleExpand
+            onToggleExpand = onToggleExpand,
+            onCommentFile = onCommentFile
         )
     }
 
@@ -108,7 +113,12 @@ fun LazyListScope.diffFileLazyItems(
             key = { lineIdx, _ -> "diff_line_${file.filename}_${hunkIdx}_$lineIdx" },
             contentType = { _, _ -> "diff_line" }
         ) { _, line ->
-            DiffLineRow(line = line)
+            DiffLineRow(
+                line = line,
+                onClick = if (onClickLine != null && line.kind != DiffLineKind.META) {
+                    { onClickLine(line) }
+                } else null
+            )
         }
     }
 }
@@ -117,7 +127,8 @@ fun LazyListScope.diffFileLazyItems(
 private fun DiffFileHeaderRow(
     file: PullFileChange,
     expanded: Boolean,
-    onToggleExpand: () -> Unit
+    onToggleExpand: () -> Unit,
+    onCommentFile: (() -> Unit)? = null
 ) {
     val statusColor = when (file.status) {
         FileChangeStatus.ADDED -> Color(0xFF16A34A)
@@ -183,12 +194,25 @@ private fun DiffFileHeaderRow(
                 containerColor = statusColor.copy(alpha = 0.2f),
                 contentColor = MaterialTheme.colorScheme.onSurface
             )
+            if (onCommentFile != null) {
+                IconButton(onClick = onCommentFile, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        imageVector = Lucide.MessageSquarePlus,
+                        contentDescription = "Comment on file",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun DiffLineRow(line: DiffLine) {
+private fun DiffLineRow(
+    line: DiffLine,
+    onClick: (() -> Unit)? = null
+) {
     val lineBg = when (line.kind) {
         DiffLineKind.ADDED -> Color(0xFF22C55E).copy(alpha = 0.14f)
         DiffLineKind.REMOVED -> MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
@@ -211,6 +235,7 @@ private fun DiffLineRow(line: DiffLine) {
         modifier = Modifier
             .fillMaxWidth()
             .background(lineBg)
+            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
             .padding(horizontal = 10.dp, vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

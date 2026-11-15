@@ -58,6 +58,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -1056,6 +1058,80 @@ class GitHubRestService(
         }
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to submit review (${res.status.value})")
+        }
+    }
+
+    suspend fun createPullRequest(
+        owner: String,
+        repo: String,
+        title: String,
+        body: String,
+        head: String,
+        base: String,
+        draft: Boolean = false
+    ): Int {
+        val payload = buildJsonObject {
+            put("title", title)
+            put("body", body)
+            put("head", head)
+            put("base", base)
+            put("draft", draft)
+        }
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/pulls") {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to create pull request (${res.status.value})")
+        }
+        return res.body<CreateIssueResponse>().number
+    }
+
+    suspend fun requestPullReviewers(
+        owner: String,
+        repo: String,
+        number: Int,
+        reviewers: List<String>
+    ) {
+        val payload = buildJsonObject {
+            put("reviewers", buildJsonArray { reviewers.distinct().forEach { add(it) } })
+        }
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/pulls/$number/requested_reviewers") {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to request reviewers (${res.status.value})")
+        }
+    }
+
+    suspend fun createPullDiffComment(
+        owner: String,
+        repo: String,
+        number: Int,
+        commitId: String,
+        path: String,
+        body: String,
+        line: Int? = null,
+        side: String = "RIGHT"
+    ) {
+        val payload = buildJsonObject {
+            put("body", body)
+            put("commit_id", commitId)
+            put("path", path)
+            if (line != null && line > 0) {
+                put("line", line)
+                put("side", side)
+            } else {
+                put("subject_type", "file")
+            }
+        }
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/pulls/$number/comments") {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to add diff comment (${res.status.value})")
         }
     }
 

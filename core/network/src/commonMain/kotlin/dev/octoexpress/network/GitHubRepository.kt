@@ -1303,4 +1303,94 @@ class GitHubRepository(
             securityOverviewCache.put(key, it)
         }
     }
+
+    suspend fun createPullRequest(
+        owner: String,
+        repo: String,
+        title: String,
+        body: String,
+        head: String,
+        base: String,
+        draft: Boolean = false
+    ): Result<Int> = runCatching {
+        restService.createPullRequest(owner, repo, title, body, head, base, draft)
+    }.onSuccess {
+        repoIssuesCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        myIssuesCache.clear()
+    }
+
+    suspend fun setPullRequestDraftState(
+        owner: String,
+        repo: String,
+        number: Int,
+        pullRequestId: String,
+        draft: Boolean
+    ): Result<Unit> = runCatching {
+        graphQlService.setPullRequestDraftState(pullRequestId, draft)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
+        repoIssuesCache.invalidateWhere { it.owner == owner && it.repo == repo }
+    }
+
+    suspend fun requestPullReviewers(
+        owner: String,
+        repo: String,
+        number: Int,
+        reviewers: List<String>
+    ): Result<Unit> = runCatching {
+        restService.requestPullReviewers(owner, repo, number, reviewers)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
+    }
+
+    suspend fun createPullDiffComment(
+        owner: String,
+        repo: String,
+        number: Int,
+        commitId: String,
+        path: String,
+        body: String,
+        line: Int? = null,
+        side: String = "RIGHT"
+    ): Result<Unit> = runCatching {
+        restService.createPullDiffComment(owner, repo, number, commitId, path, body, line, side)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
+    }
+
+    suspend fun toggleReaction(
+        owner: String,
+        repo: String,
+        issueOrPullNumber: Int,
+        subjectId: String,
+        content: String,
+        currentlyReacted: Boolean
+    ): Result<Boolean> = runCatching {
+        graphQlService.toggleReaction(subjectId, content, currentlyReacted)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, issueOrPullNumber))
+    }
+
+    suspend fun updateIssueComment(
+        owner: String,
+        repo: String,
+        issueOrPullNumber: Int,
+        commentId: String,
+        body: String
+    ): Result<Unit> = runCatching {
+        graphQlService.updateIssueComment(commentId, body)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, issueOrPullNumber))
+    }
+
+    suspend fun deleteIssueComment(
+        owner: String,
+        repo: String,
+        issueOrPullNumber: Int,
+        commentId: String
+    ): Result<Unit> = runCatching {
+        graphQlService.deleteIssueComment(commentId)
+    }.onSuccess {
+        issueDetailCache.invalidate(IssuePullKey(owner, repo, issueOrPullNumber))
+    }
 }

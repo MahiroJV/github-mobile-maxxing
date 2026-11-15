@@ -1093,6 +1093,9 @@ fun RepoDetailScreen(
     var issuesError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var pullsError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var isLoading by remember(repo.fullName) { mutableStateOf(detail == null && entries.isEmpty()) }
+    var showCreatePrDialog by remember { mutableStateOf(false) }
+    var creatingPr by remember { mutableStateOf(false) }
+    var createPrError by remember { mutableStateOf<String?>(null) }
 
     var showBranchMenu by remember { mutableStateOf(false) }
     var showCreateIssueDialog by remember { mutableStateOf(false) }
@@ -2357,6 +2360,10 @@ fun RepoDetailScreen(
                     isLoading = pullsLoading,
                     errorMsg = pullsError,
                     onRefresh = { loadRepoPulls(pullStateFilter, forceRefresh = true) },
+                    onCreateNew = {
+                        createPrError = null
+                        showCreatePrDialog = true
+                    },
                     onOpenItem = { item ->
                         onOpenIssueOrPull(
                             IssuePullTarget(repo.owner, repo.name, item.number, item.title)
@@ -2588,6 +2595,44 @@ fun RepoDetailScreen(
         )
     }
 
+    if (showCreatePrDialog) {
+        val branchNames = detail?.branches.orEmpty().map { it.name }.ifEmpty { listOf(currentRef, repo.defaultBranch).distinct() }
+        val defaultBase = detail?.summary?.defaultBranch ?: repo.defaultBranch
+        val defaultHead = branchNames.firstOrNull { it != defaultBase } ?: currentRef
+        CreatePullRequestDialog(
+            branches = branchNames,
+            initialHead = defaultHead,
+            initialBase = defaultBase,
+            isSubmitting = creatingPr,
+            errorMsg = createPrError,
+            onDismiss = { showCreatePrDialog = false },
+            onCreate = { title, body, head, base, isDraft ->
+                scope.launch {
+                    creatingPr = true
+                    createPrError = null
+                    container.repository.createPullRequest(
+                        owner = repo.owner,
+                        repo = repo.name,
+                        title = title,
+                        body = body,
+                        head = head,
+                        base = base,
+                        draft = isDraft
+                    ).onSuccess { createdNumber ->
+                        creatingPr = false
+                        showCreatePrDialog = false
+                        onMessage("Created PR #$createdNumber")
+                        loadRepoPulls(pullStateFilter, forceRefresh = true)
+                        onOpenIssueOrPull(IssuePullTarget(repo.owner, repo.name, createdNumber, title))
+                    }.onFailure { err ->
+                        creatingPr = false
+                        createPrError = err.message ?: "Failed to create pull request"
+                    }
+                }
+            }
+        )
+    }
+
     if (showDispatchDialog) {
         DispatchWorkflowDialog(
             workflows = workflows.filter { it.state == "active" }.ifEmpty { workflows },
@@ -2613,6 +2658,84 @@ fun RepoDetailScreen(
 }
 
 
+@Composable
+private fun CreatePullRequestDialog(
+    branches: List<String>,
+    initialHead: String,
+    initialBase: String,
+    isSubmitting: Boolean,
+    errorMsg: String?,
+    onDismiss: () -> Unit,
+    onCreate: (title: String, body: String, head: String, base: String, draft: Boolean) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var body by remember { mutableStateOf("") }
+    var head by remember(initialHead) { mutableStateOf(initialHead) }
+    var base by remember(initialBase) { mutableStateOf(initialBase) }
+    var isDraft by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        title = { Text("New Pull Request") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RefSelectorDropdown(
+                        label = "Head",
+                        selectedRef = head,
+                        options = branches,
+                        onSelect = { head = it },
+                        modifier = Modifier.weight(1f)
+                    )
+                    RefSelectorDropdown(
+                        label = "Base",
+                        selectedRef = base,
+                        options = branches,
+                        onSelect = { base = it },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("PR Title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = body,
+                    onValueChange = { body = it },
+                    label = { Text("Description (Markdown)") },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Create as draft PR", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Switch(checked = isDraft, onCheckedChange = { isDraft = it })
+                }
+                if (errorMsg != null) {
+                    Text(errorMsg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = title.trim().isNotBlank() && head.isNotBlank() && base.isNotBlank() && !isSubmitting,
+                onClick = { onCreate(title.trim(), body.trim(), head.trim(), base.trim(), isDraft) }
+            ) {
+                Text(if (isSubmitting) "Creating..." else "Create PR")
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RepoIssuesOrPullsTabContent(
@@ -2623,6 +2746,7 @@ private fun RepoIssuesOrPullsTabContent(
     isLoading: Boolean,
     errorMsg: String?,
     onRefresh: () -> Unit,
+    onCreateNew: (() -> Unit)? = null,
     onOpenItem: (IssueOrPullSummary) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -2641,6 +2765,16 @@ private fun RepoIssuesOrPullsTabContent(
                 )
             }
             Spacer(Modifier.weight(1f))
+            if (onCreateNew != null) {
+                OutlinedButton(
+                    onClick = onCreateNew,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New", maxLines = 1, softWrap = false)
+                }
+            }
             IconButton(onClick = onRefresh) {
                 Icon(Lucide.RefreshCw, contentDescription = "Refresh $kindLabel", modifier = Modifier.size(18.dp))
             }

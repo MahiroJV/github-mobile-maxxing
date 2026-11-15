@@ -91,6 +91,13 @@ data class IssueOrPullSummary(
     val reviewDecision: String? = null
 )
 
+@Serializable
+data class ReactionSummary(
+    val content: String, // THUMBS_UP, THUMBS_DOWN, LAUGH, HOORAY, CONFUSED, HEART, ROCKET, EYES
+    val count: Int,
+    val viewerHasReacted: Boolean
+)
+
 sealed interface TimelineEvent {
     val id: String
     val createdAt: String
@@ -100,7 +107,10 @@ sealed interface TimelineEvent {
         override val createdAt: String,
         val author: UserSummary,
         val body: String,
-        val authorAssociation: String? = null
+        val authorAssociation: String? = null,
+        val reactions: List<ReactionSummary> = emptyList(),
+        val viewerCanUpdate: Boolean = false,
+        val viewerCanDelete: Boolean = false
     ) : TimelineEvent
 
     data class ReviewEventItem(
@@ -159,7 +169,10 @@ data class IssueOrPullDetail(
     val viewerCanUpdate: Boolean = false,
     val viewerCanCloseOrReopen: Boolean = false,
     val viewerCanMerge: Boolean = false,
-    val viewerCanEditMetadata: Boolean = false
+    val viewerCanEditMetadata: Boolean = false,
+    val headRefOid: String? = null,
+    val reactions: List<ReactionSummary> = emptyList(),
+    val requestedReviewers: List<UserSummary> = emptyList()
 )
 
 @Serializable
