@@ -4,6 +4,7 @@ import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.ActivityEventKind
 import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.BranchRef
+import dev.octoexpress.model.CheckRunSummary
 import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
@@ -27,6 +28,10 @@ import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
+import dev.octoexpress.model.WorkflowJobStep
+import dev.octoexpress.model.WorkflowJobSummary
+import dev.octoexpress.model.WorkflowRunSummary
+import dev.octoexpress.model.WorkflowSummary
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -37,6 +42,7 @@ import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
@@ -302,6 +308,95 @@ private data class RestCompareDto(
     val commits: List<RestCommitDto> = emptyList(),
     val files: List<PullFileDto> = emptyList(),
     @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestWorkflowDto(
+    val id: Long,
+    val name: String = "",
+    val path: String = "",
+    val state: String = "active",
+    @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestWorkflowsResponse(
+    val workflows: List<RestWorkflowDto> = emptyList()
+)
+
+@Serializable
+private data class RestWorkflowRunDto(
+    val id: Long,
+    @SerialName("run_number") val runNumber: Int = 0,
+    val name: String? = null,
+    @SerialName("display_title") val displayTitle: String? = null,
+    @SerialName("head_branch") val headBranch: String? = null,
+    @SerialName("head_sha") val headSha: String = "",
+    val event: String = "",
+    val status: String = "queued",
+    val conclusion: String? = null,
+    val actor: RestCommitUserDto? = null,
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+    @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestWorkflowRunsResponse(
+    @SerialName("workflow_runs") val workflowRuns: List<RestWorkflowRunDto> = emptyList()
+)
+
+@Serializable
+private data class RestWorkflowJobStepDto(
+    val name: String = "",
+    val number: Int = 0,
+    val status: String = "queued",
+    val conclusion: String? = null
+)
+
+@Serializable
+private data class RestWorkflowJobDto(
+    val id: Long,
+    val name: String = "",
+    val status: String = "queued",
+    val conclusion: String? = null,
+    @SerialName("started_at") val startedAt: String? = null,
+    @SerialName("completed_at") val completedAt: String? = null,
+    val steps: List<RestWorkflowJobStepDto> = emptyList(),
+    @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestWorkflowJobsResponse(
+    val jobs: List<RestWorkflowJobDto> = emptyList()
+)
+
+@Serializable
+private data class RestCheckAppDto(
+    val name: String? = null
+)
+
+@Serializable
+private data class RestCheckOutputDto(
+    val title: String? = null,
+    val summary: String? = null
+)
+
+@Serializable
+private data class RestCheckRunDto(
+    val id: Long,
+    val name: String = "",
+    val status: String = "queued",
+    val conclusion: String? = null,
+    val app: RestCheckAppDto? = null,
+    val output: RestCheckOutputDto? = null,
+    @SerialName("details_url") val detailsUrl: String? = null,
+    @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestCheckRunsResponse(
+    @SerialName("check_runs") val checkRuns: List<RestCheckRunDto> = emptyList()
 )
 
 @Serializable
@@ -590,6 +685,151 @@ class GitHubRestService(
             files = dto.files.map { it.toPullFileChange() },
             htmlUrl = dto.htmlUrl
         )
+    }
+
+    suspend fun fetchWorkflows(owner: String, repo: String): List<WorkflowSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/actions/workflows")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load workflows (${res.status.value})")
+        }
+        return res.body<RestWorkflowsResponse>().workflows.map {
+            WorkflowSummary(id = it.id, name = it.name, path = it.path, state = it.state, htmlUrl = it.htmlUrl)
+        }
+    }
+
+    suspend fun fetchWorkflowRuns(
+        owner: String,
+        repo: String,
+        workflowId: Long? = null,
+        branch: String? = null,
+        perPage: Int = 25
+    ): List<WorkflowRunSummary> {
+        val url = if (workflowId != null) {
+            "$baseUrl/repos/$owner/$repo/actions/workflows/$workflowId/runs"
+        } else {
+            "$baseUrl/repos/$owner/$repo/actions/runs"
+        }
+        val res = httpClient.get(url) {
+            branch?.takeIf { it.isNotBlank() }?.let { parameter("branch", it) }
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load workflow runs (${res.status.value})")
+        }
+        return res.body<RestWorkflowRunsResponse>().workflowRuns.map {
+            WorkflowRunSummary(
+                id = it.id,
+                runNumber = it.runNumber,
+                name = it.name.orEmpty().ifBlank { it.displayTitle.orEmpty() },
+                displayTitle = it.displayTitle.orEmpty().ifBlank { it.name.orEmpty() },
+                headBranch = it.headBranch.orEmpty(),
+                headSha = it.headSha,
+                event = it.event,
+                status = it.status,
+                conclusion = it.conclusion,
+                actorLogin = it.actor?.login.orEmpty(),
+                actorAvatarUrl = it.actor?.avatarUrl.orEmpty(),
+                createdAt = it.createdAt,
+                updatedAt = it.updatedAt,
+                htmlUrl = it.htmlUrl
+            )
+        }
+    }
+
+    suspend fun fetchWorkflowRunJobs(owner: String, repo: String, runId: Long): List<WorkflowJobSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/actions/runs/$runId/jobs") {
+            parameter("per_page", 50)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load jobs for run #$runId (${res.status.value})")
+        }
+        return res.body<RestWorkflowJobsResponse>().jobs.map { job ->
+            WorkflowJobSummary(
+                id = job.id,
+                name = job.name,
+                status = job.status,
+                conclusion = job.conclusion,
+                startedAt = job.startedAt,
+                completedAt = job.completedAt,
+                steps = job.steps.map { s ->
+                    WorkflowJobStep(name = s.name, number = s.number, status = s.status, conclusion = s.conclusion)
+                },
+                htmlUrl = job.htmlUrl
+            )
+        }
+    }
+
+    suspend fun fetchJobLogs(owner: String, repo: String, jobId: Long): String {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/actions/jobs/$jobId/logs")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load job logs (${res.status.value})")
+        }
+        val full = res.bodyAsText()
+        // Keep last 40KB if an action log is huge so mobile rendering stays fluid
+        return if (full.length > 40_000) "... (truncated to latest 40 KB) ...\n" + full.takeLast(40_000) else full
+    }
+
+    suspend fun rerunWorkflow(owner: String, repo: String, runId: Long, failedOnly: Boolean = false) {
+        val action = if (failedOnly) "rerun-failed-jobs" else "rerun"
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/actions/runs/$runId/$action")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to re-run workflow (${res.status.value})")
+        }
+    }
+
+    suspend fun cancelWorkflowRun(owner: String, repo: String, runId: Long) {
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/actions/runs/$runId/cancel")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to cancel run (${res.status.value})")
+        }
+    }
+
+    suspend fun dispatchWorkflow(
+        owner: String,
+        repo: String,
+        workflowId: Long,
+        ref: String,
+        inputs: Map<String, String> = emptyMap()
+    ) {
+        val payload = buildJsonObject {
+            put("ref", ref)
+            if (inputs.isNotEmpty()) {
+                put(
+                    "inputs",
+                    buildJsonObject {
+                        inputs.forEach { (k, v) -> put(k, v) }
+                    }
+                )
+            }
+        }
+        val res = httpClient.post("$baseUrl/repos/$owner/$repo/actions/workflows/$workflowId/dispatches") {
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to dispatch workflow (${res.status.value})")
+        }
+    }
+
+    suspend fun fetchCheckRunsForRef(owner: String, repo: String, ref: String): List<CheckRunSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/commits/${ref.encodeURLPathPart()}/check-runs") {
+            parameter("per_page", 50)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load check runs (${res.status.value})")
+        }
+        return res.body<RestCheckRunsResponse>().checkRuns.map { cr ->
+            CheckRunSummary(
+                id = cr.id,
+                name = cr.name,
+                status = cr.status,
+                conclusion = cr.conclusion,
+                appName = cr.app?.name,
+                title = cr.output?.title,
+                summary = cr.output?.summary,
+                detailsUrl = cr.detailsUrl?.ifBlank { cr.htmlUrl } ?: cr.htmlUrl
+            )
+        }
     }
 
     suspend fun postComment(owner: String, repo: String, number: Int, body: String) {

@@ -77,6 +77,7 @@ import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
 import dev.octoexpress.auth.openUrlInBrowser
+import dev.octoexpress.model.CheckRunSummary
 import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
 import dev.octoexpress.model.IssueOrPullState
@@ -101,8 +102,9 @@ import dev.octoexpress.ui.components.diffFileLazyItems
 import kotlinx.coroutines.launch
 
 private enum class DetailTab(val label: String) {
-    CONVERSATION("Conversation"),
-    FILES("Files & Diff")
+    CONVERSATION("Chat"),
+    CHECKS("Checks"),
+    FILES("Files")
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -122,6 +124,8 @@ fun IssuePullDetailPane(
     }
     var isLoading by remember(target) { mutableStateOf(detail == null) }
     var filesLoading by remember(target) { mutableStateOf(false) }
+    var checkRuns by remember(target) { mutableStateOf<List<CheckRunSummary>?>(null) }
+    var checksLoading by remember(target) { mutableStateOf(false) }
     var errorMsg by remember(target) { mutableStateOf<String?>(null) }
     var selectedTab by remember(target) { mutableStateOf(DetailTab.CONVERSATION) }
 
@@ -256,15 +260,33 @@ fun IssuePullDetailPane(
 
                             if (isPr) {
                                 Spacer(Modifier.height(6.dp))
+                                val headRef = item.headRefName
+                                LaunchedEffect(headRef, selectedTab) {
+                                    if (!headRef.isNullOrBlank() && selectedTab == DetailTab.CHECKS && checkRuns == null) {
+                                        checksLoading = true
+                                        container.repository.getCheckRunsForRef(target.owner, target.repo, headRef)
+                                            .onSuccess { checkRuns = it }
+                                            .onFailure { onMessage(it.message ?: "Failed to load CI checks") }
+                                        checksLoading = false
+                                    }
+                                }
                                 OctoConnectedButtonGroup(
                                     options = DetailTab.entries,
                                     selected = selectedTab,
                                     onSelect = { selectedTab = it },
                                     labelProvider = { tab ->
-                                        if (tab == DetailTab.FILES) "${tab.label} (${item.changedFilesCount})" else tab.label
+                                        when (tab) {
+                                            DetailTab.FILES -> "${tab.label} (${item.changedFilesCount})"
+                                            DetailTab.CHECKS -> checkRuns?.let { "${tab.label} (${it.size})" } ?: tab.label
+                                            DetailTab.CONVERSATION -> tab.label
+                                        }
                                     },
                                     iconProvider = { tab ->
-                                        if (tab == DetailTab.CONVERSATION) Lucide.MessageSquare else Lucide.FileDiff
+                                        when (tab) {
+                                            DetailTab.CONVERSATION -> Lucide.MessageSquare
+                                            DetailTab.CHECKS -> Lucide.CircleCheck
+                                            DetailTab.FILES -> Lucide.FileDiff
+                                        }
                                     },
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -348,6 +370,112 @@ fun IssuePullDetailPane(
                                 contentType = { it::class }
                             ) { event ->
                                 TimelineItemCard(event)
+                            }
+                        }
+                    } else if (selectedTab == DetailTab.CHECKS) {
+                        val runs = checkRuns
+                        when {
+                            checksLoading && runs == null -> {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    OctoLoadingState(message = "Loading CI check runs...")
+                                }
+                            }
+                            runs.isNullOrEmpty() -> {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        Lucide.CircleCheck,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(44.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.height(10.dp))
+                                    Text("No CI check runs reported", style = MaterialTheme.typography.titleMedium)
+                                    val headRef = item.headRefName
+                                    if (!headRef.isNullOrBlank()) {
+                                        Spacer(Modifier.height(10.dp))
+                                        FilledTonalButton(onClick = {
+                                            scope.launch {
+                                                checksLoading = true
+                                                container.repository.getCheckRunsForRef(
+                                                    target.owner, target.repo, headRef, forceRefresh = true
+                                                ).onSuccess { checkRuns = it }
+                                                checksLoading = false
+                                            }
+                                        }) { Text("Refresh Checks") }
+                                    }
+                                }
+                            }
+                            else -> {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    items(items = runs, key = { it.id }, contentType = { "check_run" }) { cr ->
+                                        val isSuccess = cr.conclusion.equals("success", ignoreCase = true)
+                                        val isFailure = cr.conclusion.equals("failure", ignoreCase = true) ||
+                                            cr.conclusion.equals("timed_out", ignoreCase = true)
+                                        val tint = when {
+                                            isSuccess -> Color(0xFF16A34A)
+                                            isFailure -> MaterialTheme.colorScheme.error
+                                            else -> Color(0xFFD97706)
+                                        }
+                                        val icon = when {
+                                            isSuccess -> Lucide.CircleCheck
+                                            isFailure -> Lucide.X
+                                            else -> Lucide.CircleDot
+                                        }
+                                        ElevatedCard(
+                                            shape = MaterialTheme.shapes.large,
+                                            colors = CardDefaults.elevatedCardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(cr.name, style = MaterialTheme.typography.titleSmall)
+                                                        cr.appName?.let { app ->
+                                                            Text(
+                                                                app,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                    }
+                                                    ExpressiveStatusPill(
+                                                        label = (cr.conclusion ?: cr.status).uppercase(),
+                                                        containerColor = tint.copy(alpha = 0.16f),
+                                                        contentColor = tint
+                                                    )
+                                                    if (cr.detailsUrl.isNotBlank()) {
+                                                        IconButton(onClick = { openUrlInBrowser(cr.detailsUrl) }) {
+                                                            Icon(Lucide.ExternalLink, contentDescription = "Open details", modifier = Modifier.size(16.dp))
+                                                        }
+                                                    }
+                                                }
+                                                cr.title?.takeIf { it.isNotBlank() }?.let { title ->
+                                                    Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                                }
+                                                cr.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+                                                    GitHubMarkdown(summary)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else {

@@ -50,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,7 +80,9 @@ import com.composables.icons.lucide.ArrowLeftRight
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
+import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Compass
+import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.EyeOff
 import com.composables.icons.lucide.File
@@ -95,6 +98,7 @@ import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.Play
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
@@ -105,6 +109,7 @@ import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
+import dev.octoexpress.auth.openUrlInBrowser
 import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
@@ -121,6 +126,9 @@ import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
 import dev.octoexpress.model.UserSummary
+import dev.octoexpress.model.WorkflowJobSummary
+import dev.octoexpress.model.WorkflowRunSummary
+import dev.octoexpress.model.WorkflowSummary
 import dev.octoexpress.ui.components.CodeViewer
 import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubMarkdown
@@ -148,6 +156,7 @@ private enum class RepoListTab(val label: String) {
 private enum class RepoDetailTab(val label: String) {
     CODE("Code"),
     COMMITS("Commits"),
+    ACTIONS("Actions"),
     ISSUES("Issues"),
     PULLS("PRs")
 }
@@ -1095,6 +1104,71 @@ fun RepoDetailScreen(
     var compareLoading by remember(repo.fullName) { mutableStateOf(false) }
     var compareError by remember(repo.fullName) { mutableStateOf<String?>(null) }
 
+    var workflows by remember(repo.fullName) { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
+    var selectedWorkflowId by remember(repo.fullName) { mutableStateOf<Long?>(null) }
+    var workflowRuns by remember(repo.fullName) {
+        mutableStateOf(container.repository.peekWorkflowRuns(repo.owner, repo.name))
+    }
+    var actionsLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var actionsError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var openedRun by remember(repo.fullName) { mutableStateOf<WorkflowRunSummary?>(null) }
+    var runJobs by remember(repo.fullName) { mutableStateOf<List<WorkflowJobSummary>?>(null) }
+    var jobsLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var openedLogJob by remember(repo.fullName) { mutableStateOf<WorkflowJobSummary?>(null) }
+    var jobLogsText by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var jobLogsLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var actionsBusy by remember(repo.fullName) { mutableStateOf(false) }
+    var showDispatchDialog by remember { mutableStateOf(false) }
+
+    fun loadActions(workflowId: Long? = selectedWorkflowId, forceRefresh: Boolean = false) {
+        scope.launch {
+            val cached = container.repository.peekWorkflowRuns(repo.owner, repo.name, workflowId)
+            if (cached != null) {
+                workflowRuns = cached
+                actionsLoading = false
+            } else {
+                actionsLoading = true
+            }
+            actionsError = null
+            container.repository.getWorkflows(repo.owner, repo.name, forceRefresh = forceRefresh)
+                .onSuccess { workflows = it }
+            container.repository.getWorkflowRuns(repo.owner, repo.name, workflowId, forceRefresh = forceRefresh)
+                .onSuccess {
+                    workflowRuns = it
+                    actionsLoading = false
+                }
+                .onFailure {
+                    actionsError = it.message ?: "Failed to load Actions runs"
+                    actionsLoading = false
+                }
+        }
+    }
+
+    fun openRun(run: WorkflowRunSummary, forceRefresh: Boolean = false) {
+        openedRun = run
+        openedLogJob = null
+        jobLogsText = null
+        scope.launch {
+            jobsLoading = true
+            container.repository.getWorkflowRunJobs(repo.owner, repo.name, run.id, forceRefresh = forceRefresh)
+                .onSuccess { runJobs = it }
+                .onFailure { onMessage(it.message ?: "Failed to load jobs") }
+            jobsLoading = false
+        }
+    }
+
+    fun loadJobLog(job: WorkflowJobSummary) {
+        openedLogJob = job
+        jobLogsText = null
+        scope.launch {
+            jobLogsLoading = true
+            container.repository.getJobLogs(repo.owner, repo.name, job.id)
+                .onSuccess { jobLogsText = it }
+                .onFailure { onMessage(it.message ?: "Logs unavailable (check repo scope / expiration)") }
+            jobLogsLoading = false
+        }
+    }
+
     fun loadCommits(ref: String, forceRefresh: Boolean = false) {
         scope.launch {
             val cached = container.repository.peekRepoCommits(repo.owner, repo.name, ref)
@@ -1255,6 +1329,14 @@ fun RepoDetailScreen(
     // Android System Back navigates commit -> compare -> file -> parent dir -> repo list
     BackHandler(enabled = true) {
         when {
+            activeTab == RepoDetailTab.ACTIONS && openedLogJob != null -> {
+                openedLogJob = null
+                jobLogsText = null
+            }
+            activeTab == RepoDetailTab.ACTIONS && openedRun != null -> {
+                openedRun = null
+                runJobs = null
+            }
             activeTab == RepoDetailTab.COMMITS && openedCommitSha != null -> {
                 openedCommitSha = null
                 openedCommitDetail = null
@@ -1322,6 +1404,9 @@ fun RepoDetailScreen(
     LaunchedEffect(activeTab, currentRef, repo.fullName) {
         if (activeTab == RepoDetailTab.COMMITS && !showCompareView && openedCommitSha == null) {
             loadCommits(currentRef, forceRefresh = false)
+        }
+        if (activeTab == RepoDetailTab.ACTIONS && openedRun == null) {
+            loadActions(selectedWorkflowId, forceRefresh = false)
         }
     }
 
@@ -1550,27 +1635,36 @@ fun RepoDetailScreen(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                OctoConnectedButtonGroup(
-                    options = RepoDetailTab.entries,
-                    selected = activeTab,
-                    onSelect = {
-                        activeTab = it
-                        if (it != RepoDetailTab.COMMITS) {
-                            showCompareView = false
-                            openedCommitSha = null
-                        }
-                    },
-                    labelProvider = { it.label },
-                    iconProvider = {
-                        when (it) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(RepoDetailTab.entries, key = { it.name }) { tab ->
+                        val icon = when (tab) {
                             RepoDetailTab.CODE -> Lucide.Folder
                             RepoDetailTab.COMMITS -> Lucide.GitCommitHorizontal
+                            RepoDetailTab.ACTIONS -> Lucide.Play
                             RepoDetailTab.ISSUES -> Lucide.CircleDot
                             RepoDetailTab.PULLS -> Lucide.GitPullRequest
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                        FilterChip(
+                            selected = activeTab == tab,
+                            onClick = {
+                                activeTab = tab
+                                if (tab != RepoDetailTab.COMMITS) {
+                                    showCompareView = false
+                                    openedCommitSha = null
+                                }
+                                if (tab != RepoDetailTab.ACTIONS) {
+                                    openedRun = null
+                                    openedLogJob = null
+                                }
+                            },
+                            leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                            label = { Text(tab.label, maxLines = 1, softWrap = false) }
+                        )
+                    }
+                }
 
                 if (isLoading) {
                     Spacer(Modifier.height(8.dp))
@@ -1792,6 +1886,78 @@ fun RepoDetailScreen(
                 }
             }
 
+            RepoDetailTab.ACTIONS -> {
+                when {
+                    openedLogJob != null -> {
+                        WorkflowLogViewer(
+                            job = openedLogJob!!,
+                            logs = jobLogsText,
+                            isLoading = jobLogsLoading,
+                            onBack = {
+                                openedLogJob = null
+                                jobLogsText = null
+                            }
+                        )
+                    }
+                    openedRun != null -> {
+                        WorkflowRunDetailView(
+                            run = openedRun!!,
+                            jobs = runJobs,
+                            isLoading = jobsLoading,
+                            actionBusy = actionsBusy,
+                            onBack = {
+                                openedRun = null
+                                runJobs = null
+                            },
+                            onRefresh = { openRun(openedRun!!, forceRefresh = true) },
+                            onRerun = { failedOnly ->
+                                actionsBusy = true
+                                scope.launch {
+                                    container.repository.rerunWorkflow(repo.owner, repo.name, openedRun!!.id, failedOnly)
+                                        .onSuccess {
+                                            onMessage(if (failedOnly) "Re-running failed jobs" else "Re-running workflow")
+                                            loadActions(selectedWorkflowId, forceRefresh = true)
+                                            openRun(openedRun!!, forceRefresh = true)
+                                        }
+                                        .onFailure { onMessage(it.message ?: "Re-run failed") }
+                                    actionsBusy = false
+                                }
+                            },
+                            onCancel = {
+                                actionsBusy = true
+                                scope.launch {
+                                    container.repository.cancelWorkflowRun(repo.owner, repo.name, openedRun!!.id)
+                                        .onSuccess {
+                                            onMessage("Cancellation requested")
+                                            loadActions(selectedWorkflowId, forceRefresh = true)
+                                            openRun(openedRun!!, forceRefresh = true)
+                                        }
+                                        .onFailure { onMessage(it.message ?: "Cancel failed") }
+                                    actionsBusy = false
+                                }
+                            },
+                            onOpenLogs = { job -> loadJobLog(job) }
+                        )
+                    }
+                    else -> {
+                        RepoActionsTabContent(
+                            workflows = workflows,
+                            selectedWorkflowId = selectedWorkflowId,
+                            runs = workflowRuns,
+                            isLoading = actionsLoading,
+                            errorMsg = actionsError,
+                            onSelectWorkflow = { wfId ->
+                                selectedWorkflowId = wfId
+                                loadActions(wfId, forceRefresh = false)
+                            },
+                            onRefresh = { loadActions(selectedWorkflowId, forceRefresh = true) },
+                            onOpenDispatch = { showDispatchDialog = true },
+                            onOpenRun = { run -> openRun(run) }
+                        )
+                    }
+                }
+            }
+
             RepoDetailTab.ISSUES -> {
                 RepoIssuesOrPullsTabContent(
                     kindLabel = "Issues",
@@ -1973,6 +2139,29 @@ fun RepoDetailScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showPeopleDialog = false }) { Text("Close") }
+            }
+        )
+    }
+
+    if (showDispatchDialog) {
+        DispatchWorkflowDialog(
+            workflows = workflows.filter { it.state == "active" }.ifEmpty { workflows },
+            branches = detail?.branches.orEmpty().map { it.name }.ifEmpty { listOf(currentRef) },
+            defaultBranch = currentRef,
+            busy = actionsBusy,
+            onDismiss = { showDispatchDialog = false },
+            onDispatch = { workflowId, ref, inputs ->
+                actionsBusy = true
+                scope.launch {
+                    container.repository.dispatchWorkflow(repo.owner, repo.name, workflowId, ref, inputs)
+                        .onSuccess {
+                            showDispatchDialog = false
+                            onMessage("Dispatched workflow on $ref")
+                            loadActions(selectedWorkflowId, forceRefresh = true)
+                        }
+                        .onFailure { onMessage(it.message ?: "Workflow dispatch failed") }
+                    actionsBusy = false
+                }
             }
         )
     }
@@ -2571,4 +2760,423 @@ private fun RefSelectorDropdown(
             }
         }
     }
+}
+
+@Composable
+private fun actionStatusVisual(status: String, conclusion: String?): Pair<ImageVector, Color> {
+    return when {
+        status != "completed" -> Lucide.Clock to Color(0xFFD97706)
+        conclusion == "success" -> Lucide.CircleCheck to Color(0xFF16A34A)
+        conclusion == "failure" || conclusion == "timed_out" -> Lucide.X to MaterialTheme.colorScheme.error
+        else -> Lucide.CircleDot to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RepoActionsTabContent(
+    workflows: List<WorkflowSummary>,
+    selectedWorkflowId: Long?,
+    runs: List<WorkflowRunSummary>?,
+    isLoading: Boolean,
+    errorMsg: String?,
+    onSelectWorkflow: (Long?) -> Unit,
+    onRefresh: () -> Unit,
+    onOpenDispatch: () -> Unit,
+    onOpenRun: (WorkflowRunSummary) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                item(key = "wf_all") {
+                    FilterChip(
+                        selected = selectedWorkflowId == null,
+                        onClick = { onSelectWorkflow(null) },
+                        label = { Text("All runs") }
+                    )
+                }
+                items(items = workflows, key = { it.id }) { wf ->
+                    FilterChip(
+                        selected = selectedWorkflowId == wf.id,
+                        onClick = { onSelectWorkflow(wf.id) },
+                        label = { Text(wf.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    )
+                }
+            }
+            if (workflows.isNotEmpty()) {
+                FilledTonalButton(
+                    onClick = onOpenDispatch,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Icon(Lucide.Play, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Run", maxLines = 1, softWrap = false)
+                }
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(Lucide.RefreshCw, contentDescription = "Refresh runs", modifier = Modifier.size(18.dp))
+            }
+        }
+
+        if (isLoading && !runs.isNullOrEmpty()) {
+            OctoWavyProgress(modifier = Modifier.padding(horizontal = 16.dp))
+        }
+
+        PullToRefreshBox(
+            isRefreshing = isLoading && !runs.isNullOrEmpty(),
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            when {
+                isLoading && runs == null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        OctoLoadingState(message = "Loading workflow runs...")
+                    }
+                }
+                errorMsg != null && runs.isNullOrEmpty() -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(errorMsg, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(10.dp))
+                        FilledTonalButton(onClick = onRefresh) { Text("Retry") }
+                    }
+                }
+                runs.isNullOrEmpty() -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Lucide.Play, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(10.dp))
+                        Text("No workflow runs yet", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(items = runs, key = { it.id }, contentType = { "workflow_run" }) { run ->
+                            WorkflowRunSummaryCard(run = run, onClick = { onOpenRun(run) })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkflowRunSummaryCard(
+    run: WorkflowRunSummary,
+    onClick: () -> Unit
+) {
+    val (statusIcon, statusTint) = actionStatusVisual(run.status, run.conclusion)
+    ElevatedCard(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(statusIcon, contentDescription = run.conclusion ?: run.status, tint = statusTint, modifier = Modifier.size(20.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = run.displayTitle.ifBlank { run.name },
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "${run.name} #${run.runNumber}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (run.headBranch.isNotBlank()) {
+                        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+                            Text(
+                                text = run.headBranch,
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (run.event.isNotBlank()) {
+                        Text(
+                            text = run.event,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkflowRunDetailView(
+    run: WorkflowRunSummary,
+    jobs: List<WorkflowJobSummary>?,
+    isLoading: Boolean,
+    actionBusy: Boolean,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onRerun: (failedOnly: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onOpenLogs: (WorkflowJobSummary) -> Unit
+) {
+    val (statusIcon, statusTint) = actionStatusVisual(run.status, run.conclusion)
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilledTonalButton(onClick = onBack) {
+                Icon(Lucide.ArrowLeft, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Runs")
+            }
+            Text("#${run.runNumber}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            if (run.htmlUrl.isNotBlank()) {
+                IconButton(onClick = { openUrlInBrowser(run.htmlUrl) }) {
+                    Icon(Lucide.ExternalLink, contentDescription = "Open in browser", modifier = Modifier.size(16.dp))
+                }
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(Lucide.RefreshCw, contentDescription = "Refresh jobs", modifier = Modifier.size(18.dp))
+            }
+        }
+
+        if (isLoading && jobs == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                OctoLoadingState(message = "Loading jobs...")
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item(key = "run_summary_header") {
+                    ElevatedCard(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(statusIcon, contentDescription = null, tint = statusTint, modifier = Modifier.size(20.dp))
+                                Text(run.displayTitle.ifBlank { run.name }, style = MaterialTheme.typography.titleMedium)
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                            ) {
+                                if (run.status != "completed") {
+                                    FilledTonalButton(enabled = !actionBusy, onClick = onCancel) {
+                                        Icon(Lucide.X, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Cancel Run")
+                                    }
+                                } else {
+                                    FilledTonalButton(enabled = !actionBusy, onClick = { onRerun(false) }) {
+                                        Icon(Lucide.RefreshCw, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Re-run All")
+                                    }
+                                    if (run.conclusion == "failure") {
+                                        OutlinedButton(enabled = !actionBusy, onClick = { onRerun(true) }) {
+                                            Text("Re-run Failed")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                items(items = jobs.orEmpty(), key = { it.id }, contentType = { "workflow_job" }) { job ->
+                    val (jIcon, jTint) = actionStatusVisual(job.status, job.conclusion)
+                    ElevatedCard(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(jIcon, contentDescription = null, tint = jTint, modifier = Modifier.size(18.dp))
+                                Text(job.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                FilledTonalButton(
+                                    onClick = { onOpenLogs(job) },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Lucide.FileCode, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Logs")
+                                }
+                            }
+                            job.steps.forEach { step ->
+                                val (sIcon, sTint) = actionStatusVisual(step.status, step.conclusion)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(start = 8.dp)
+                                ) {
+                                    Icon(sIcon, contentDescription = null, tint = sTint, modifier = Modifier.size(14.dp))
+                                    Text(
+                                        text = "${step.number}. ${step.name}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkflowLogViewer(
+    job: WorkflowJobSummary,
+    logs: String?,
+    isLoading: Boolean,
+    onBack: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FilledTonalButton(onClick = onBack) {
+                Icon(Lucide.ArrowLeft, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Jobs")
+            }
+            Text(job.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        when {
+            isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                OctoLoadingState(message = "Loading logs...")
+            }
+            logs.isNullOrBlank() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No logs returned for this job.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            else -> CodeViewer(
+                code = logs,
+                filename = "${job.name}.log",
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun DispatchWorkflowDialog(
+    workflows: List<WorkflowSummary>,
+    branches: List<String>,
+    defaultBranch: String,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onDispatch: (workflowId: Long, ref: String, inputs: Map<String, String>) -> Unit
+) {
+    var selectedWf by remember(workflows) { mutableStateOf(workflows.firstOrNull()) }
+    var ref by remember(defaultBranch) { mutableStateOf(defaultBranch) }
+    var inputsRaw by remember { mutableStateOf("") }
+    var showWfMenu by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Run Workflow") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box {
+                    OutlinedButton(
+                        onClick = { showWfMenu = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(selectedWf?.name ?: "Select workflow", modifier = Modifier.weight(1f))
+                        Icon(Lucide.ChevronDown, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                    DropdownMenu(expanded = showWfMenu, onDismissRequest = { showWfMenu = false }) {
+                        workflows.forEach { wf ->
+                            DropdownMenuItem(
+                                text = { Text(wf.name) },
+                                onClick = {
+                                    selectedWf = wf
+                                    showWfMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = ref,
+                    onValueChange = { ref = it },
+                    label = { Text("Branch or tag ref (e.g. ${branches.firstOrNull() ?: "main"})") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = inputsRaw,
+                    onValueChange = { inputsRaw = it },
+                    label = { Text("Inputs (optional, key=value per line)") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !busy && selectedWf != null && ref.isNotBlank(),
+                onClick = {
+                    val inputsMap = inputsRaw.lineSequence()
+                        .map { it.trim() }
+                        .filter { '=' in it }
+                        .associate {
+                            val idx = it.indexOf('=')
+                            it.substring(0, idx).trim() to it.substring(idx + 1).trim()
+                        }
+                    selectedWf?.let { wf -> onDispatch(wf.id, ref.trim(), inputsMap) }
+                }
+            ) {
+                Text(if (busy) "Starting..." else "Run Workflow")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

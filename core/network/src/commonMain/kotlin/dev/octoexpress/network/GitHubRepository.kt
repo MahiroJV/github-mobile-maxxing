@@ -4,6 +4,7 @@ import dev.octoexpress.auth.SessionManager
 import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.BranchRef
+import dev.octoexpress.model.CheckRunSummary
 import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
@@ -29,6 +30,9 @@ import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
 import dev.octoexpress.model.ViewerProfile
+import dev.octoexpress.model.WorkflowJobSummary
+import dev.octoexpress.model.WorkflowRunSummary
+import dev.octoexpress.model.WorkflowSummary
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -114,6 +118,8 @@ private data class RepoIssuesKey(val owner: String, val repo: String, val pullRe
 private data class RepoPathKey(val owner: String, val repo: String, val path: String, val ref: String?)
 private data class RepoCommitKey(val owner: String, val repo: String, val sha: String)
 private data class RepoCompareKey(val owner: String, val repo: String, val base: String, val head: String)
+private data class WorkflowRunsKey(val owner: String, val repo: String, val workflowId: Long?)
+private data class WorkflowRunIdKey(val owner: String, val repo: String, val runId: Long)
 
 class GitHubRepository(
     private val sessionManager: SessionManager,
@@ -157,6 +163,10 @@ class GitHubRepository(
     private val commitDetailCache = LruMemoryCache<RepoCommitKey, CommitDetail>(ttl = 180.seconds, maxEntries = 48)
     private val tagsCache = LruMemoryCache<RepoKey, List<TagRef>>(ttl = 180.seconds, maxEntries = 32)
     private val compareCache = LruMemoryCache<RepoCompareKey, BranchCompareResult>(ttl = 60.seconds, maxEntries = 32)
+    private val workflowsCache = LruMemoryCache<RepoKey, List<WorkflowSummary>>(ttl = 180.seconds, maxEntries = 32)
+    private val workflowRunsCache = LruMemoryCache<WorkflowRunsKey, List<WorkflowRunSummary>>(ttl = 30.seconds, maxEntries = 48)
+    private val workflowJobsCache = LruMemoryCache<WorkflowRunIdKey, List<WorkflowJobSummary>>(ttl = 30.seconds, maxEntries = 48)
+    private val checkRunsCache = LruMemoryCache<RepoPathKey, List<CheckRunSummary>>(ttl = 30.seconds, maxEntries = 48)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -192,6 +202,10 @@ class GitHubRepository(
         commitDetailCache.clear()
         tagsCache.clear()
         compareCache.clear()
+        workflowsCache.clear()
+        workflowRunsCache.clear()
+        workflowJobsCache.clear()
+        checkRunsCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -987,6 +1001,111 @@ class GitHubRepository(
             restService.compareRefs(owner, repo, base, head)
         }.onSuccess {
             compareCache.put(key, it)
+        }
+    }
+
+    fun peekWorkflowRuns(owner: String, repo: String, workflowId: Long? = null): List<WorkflowRunSummary>? =
+        workflowRunsCache.peek(WorkflowRunsKey(owner, repo, workflowId))
+
+    suspend fun getWorkflows(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<List<WorkflowSummary>> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            workflowsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchWorkflows(owner, repo)
+        }.onSuccess {
+            workflowsCache.put(key, it)
+        }
+    }
+
+    suspend fun getWorkflowRuns(
+        owner: String,
+        repo: String,
+        workflowId: Long? = null,
+        forceRefresh: Boolean = false
+    ): Result<List<WorkflowRunSummary>> {
+        val key = WorkflowRunsKey(owner, repo, workflowId)
+        if (!forceRefresh) {
+            workflowRunsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchWorkflowRuns(owner, repo, workflowId)
+        }.onSuccess {
+            workflowRunsCache.put(key, it)
+        }
+    }
+
+    suspend fun getWorkflowRunJobs(
+        owner: String,
+        repo: String,
+        runId: Long,
+        forceRefresh: Boolean = false
+    ): Result<List<WorkflowJobSummary>> {
+        val key = WorkflowRunIdKey(owner, repo, runId)
+        if (!forceRefresh) {
+            workflowJobsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchWorkflowRunJobs(owner, repo, runId)
+        }.onSuccess {
+            workflowJobsCache.put(key, it)
+        }
+    }
+
+    suspend fun getJobLogs(owner: String, repo: String, jobId: Long): Result<String> = runCatching {
+        restService.fetchJobLogs(owner, repo, jobId)
+    }
+
+    suspend fun rerunWorkflow(
+        owner: String,
+        repo: String,
+        runId: Long,
+        failedOnly: Boolean = false
+    ): Result<Unit> = runCatching {
+        restService.rerunWorkflow(owner, repo, runId, failedOnly)
+    }.onSuccess {
+        workflowRunsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        workflowJobsCache.invalidate(WorkflowRunIdKey(owner, repo, runId))
+    }
+
+    suspend fun cancelWorkflowRun(owner: String, repo: String, runId: Long): Result<Unit> = runCatching {
+        restService.cancelWorkflowRun(owner, repo, runId)
+    }.onSuccess {
+        workflowRunsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        workflowJobsCache.invalidate(WorkflowRunIdKey(owner, repo, runId))
+    }
+
+    suspend fun dispatchWorkflow(
+        owner: String,
+        repo: String,
+        workflowId: Long,
+        ref: String,
+        inputs: Map<String, String> = emptyMap()
+    ): Result<Unit> = runCatching {
+        restService.dispatchWorkflow(owner, repo, workflowId, ref, inputs)
+    }.onSuccess {
+        workflowRunsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+    }
+
+    suspend fun getCheckRunsForRef(
+        owner: String,
+        repo: String,
+        ref: String,
+        forceRefresh: Boolean = false
+    ): Result<List<CheckRunSummary>> {
+        val key = RepoPathKey(owner, repo, "", ref)
+        if (!forceRefresh) {
+            checkRunsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchCheckRunsForRef(owner, repo, ref)
+        }.onSuccess {
+            checkRunsCache.put(key, it)
         }
     }
 }
