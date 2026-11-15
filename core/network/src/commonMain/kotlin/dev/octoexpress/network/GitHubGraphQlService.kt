@@ -4,6 +4,12 @@ import dev.octoexpress.model.CheckRollupSummary
 import dev.octoexpress.model.ContributionCalendar
 import dev.octoexpress.model.ContributionDay
 import dev.octoexpress.model.ContributionWeek
+import dev.octoexpress.model.DiscussionCategory
+import dev.octoexpress.model.DiscussionComment
+import dev.octoexpress.model.DiscussionDetail
+import dev.octoexpress.model.DiscussionListData
+import dev.octoexpress.model.DiscussionReply
+import dev.octoexpress.model.DiscussionSummary
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
@@ -698,6 +704,289 @@ class GitHubGraphQlService(
         else -> IssueOrPullState.OPEN
     }
 
+    suspend fun fetchDiscussions(
+        owner: String,
+        name: String,
+        categoryId: String? = null,
+        first: Int = 30
+    ): DiscussionListData {
+        val hasCategory = !categoryId.isNullOrBlank()
+        val query = if (hasCategory) {
+            """
+                query(${"$"}owner: String!, ${"$"}name: String!, ${"$"}categoryId: ID!) {
+                  repository(owner: ${"$"}owner, name: ${"$"}name) {
+                    id
+                    discussionCategories(first: 25) {
+                      nodes { id name emoji description isAnswerable }
+                    }
+                    discussions(first: $first, categoryId: ${"$"}categoryId, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                      nodes { $DISCUSSION_SUMMARY_FIELDS }
+                    }
+                  }
+                }
+            """.trimIndent()
+        } else {
+            """
+                query(${"$"}owner: String!, ${"$"}name: String!) {
+                  repository(owner: ${"$"}owner, name: ${"$"}name) {
+                    id
+                    discussionCategories(first: 25) {
+                      nodes { id name emoji description isAnswerable }
+                    }
+                    discussions(first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                      nodes { $DISCUSSION_SUMMARY_FIELDS }
+                    }
+                  }
+                }
+            """.trimIndent()
+        }
+        val vars = buildMap {
+            put("owner", owner)
+            put("name", name)
+            if (hasCategory) put("categoryId", categoryId!!)
+        }
+        val data = execute(query, vars)
+        val repoObj = data.obj("repository")
+            ?: throw GitHubApiException(404, "Repository $owner/$name not found")
+        val categories = parseDiscussionCategories(repoObj.obj("discussionCategories")?.arr("nodes"))
+        val discussions = repoObj.obj("discussions")?.arr("nodes").orEmpty().mapNotNull { el ->
+            (el as? JsonObject)?.let(::parseDiscussionSummary)
+        }
+        return DiscussionListData(
+            repositoryId = repoObj.str("id") ?: "",
+            categories = categories,
+            discussions = discussions
+        )
+    }
+
+    suspend fun fetchDiscussionDetail(
+        owner: String,
+        name: String,
+        number: Int
+    ): DiscussionDetail {
+        val query = """
+            query(${"$"}owner: String!, ${"$"}name: String!) {
+              repository(owner: ${"$"}owner, name: ${"$"}name) {
+                discussionCategories(first: 25) {
+                  nodes { id name emoji description isAnswerable }
+                }
+                discussion(number: $number) {
+                  $DISCUSSION_SUMMARY_FIELDS
+                  comments(first: 50) {
+                    nodes {
+                      id
+                      body
+                      createdAt
+                      isAnswer
+                      upvoteCount
+                      viewerHasUpvoted
+                      author { login avatarUrl }
+                      replies(first: 20) {
+                        nodes {
+                          id
+                          body
+                          createdAt
+                          isAnswer
+                          author { login avatarUrl }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val data = execute(query, mapOf("owner" to owner, "name" to name))
+        val repoObj = data.obj("repository")
+            ?: throw GitHubApiException(404, "Repository $owner/$name not found")
+        val discussionObj = repoObj.obj("discussion")
+            ?: throw GitHubApiException(404, "Discussion #$number not found")
+        val categories = parseDiscussionCategories(repoObj.obj("discussionCategories")?.arr("nodes"))
+        val comments = discussionObj.obj("comments")?.arr("nodes").orEmpty().mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val replies = obj.obj("replies")?.arr("nodes").orEmpty().mapNotNull { rEl ->
+                val rObj = rEl as? JsonObject ?: return@mapNotNull null
+                val rAuthor = rObj.obj("author")
+                DiscussionReply(
+                    id = rObj.str("id") ?: return@mapNotNull null,
+                    body = rObj.str("body") ?: "",
+                    authorLogin = rAuthor?.str("login") ?: "ghost",
+                    authorAvatarUrl = rAuthor?.str("avatarUrl") ?: "",
+                    createdAt = rObj.str("createdAt") ?: "",
+                    isAnswer = rObj.bool("isAnswer") ?: false
+                )
+            }
+            val author = obj.obj("author")
+            DiscussionComment(
+                id = obj.str("id") ?: return@mapNotNull null,
+                body = obj.str("body") ?: "",
+                authorLogin = author?.str("login") ?: "ghost",
+                authorAvatarUrl = author?.str("avatarUrl") ?: "",
+                createdAt = obj.str("createdAt") ?: "",
+                isAnswer = obj.bool("isAnswer") ?: false,
+                upvoteCount = obj.int("upvoteCount") ?: 0,
+                viewerHasUpvoted = obj.bool("viewerHasUpvoted") ?: false,
+                replies = replies
+            )
+        }
+        return DiscussionDetail(
+            summary = parseDiscussionSummary(discussionObj),
+            comments = comments,
+            categories = categories
+        )
+    }
+
+    suspend fun createDiscussion(
+        repositoryId: String,
+        categoryId: String,
+        title: String,
+        body: String
+    ): DiscussionSummary {
+        val mutation = """
+            mutation(${"$"}repositoryId: ID!, ${"$"}categoryId: ID!, ${"$"}title: String!, ${"$"}body: String!) {
+              createDiscussion(input: { repositoryId: ${"$"}repositoryId, categoryId: ${"$"}categoryId, title: ${"$"}title, body: ${"$"}body }) {
+                discussion { $DISCUSSION_SUMMARY_FIELDS }
+              }
+            }
+        """.trimIndent()
+        val data = execute(
+            mutation,
+            mapOf(
+                "repositoryId" to repositoryId,
+                "categoryId" to categoryId,
+                "title" to title,
+                "body" to body
+            )
+        )
+        val created = data.obj("createDiscussion")?.obj("discussion")
+            ?: throw GitHubApiException(422, "Failed to create discussion")
+        return parseDiscussionSummary(created)
+    }
+
+    suspend fun addDiscussionComment(
+        discussionId: String,
+        body: String,
+        replyToId: String? = null
+    ): DiscussionComment {
+        val hasReply = !replyToId.isNullOrBlank()
+        val mutation = if (hasReply) {
+            """
+                mutation(${"$"}discussionId: ID!, ${"$"}body: String!, ${"$"}replyToId: ID!) {
+                  addDiscussionComment(input: { discussionId: ${"$"}discussionId, body: ${"$"}body, replyToId: ${"$"}replyToId }) {
+                    comment {
+                      id
+                      body
+                      createdAt
+                      isAnswer
+                      upvoteCount
+                      viewerHasUpvoted
+                      author { login avatarUrl }
+                    }
+                  }
+                }
+            """.trimIndent()
+        } else {
+            """
+                mutation(${"$"}discussionId: ID!, ${"$"}body: String!) {
+                  addDiscussionComment(input: { discussionId: ${"$"}discussionId, body: ${"$"}body }) {
+                    comment {
+                      id
+                      body
+                      createdAt
+                      isAnswer
+                      upvoteCount
+                      viewerHasUpvoted
+                      author { login avatarUrl }
+                    }
+                  }
+                }
+            """.trimIndent()
+        }
+        val vars = buildMap {
+            put("discussionId", discussionId)
+            put("body", body)
+            if (hasReply) put("replyToId", replyToId!!)
+        }
+        val data = execute(mutation, vars)
+        val cObj = data.obj("addDiscussionComment")?.obj("comment")
+            ?: throw GitHubApiException(422, "Failed to add discussion comment")
+        val author = cObj.obj("author")
+        return DiscussionComment(
+            id = cObj.str("id") ?: "",
+            body = cObj.str("body") ?: body,
+            authorLogin = author?.str("login") ?: "you",
+            authorAvatarUrl = author?.str("avatarUrl") ?: "",
+            createdAt = cObj.str("createdAt") ?: "",
+            isAnswer = cObj.bool("isAnswer") ?: false,
+            upvoteCount = cObj.int("upvoteCount") ?: 0,
+            viewerHasUpvoted = cObj.bool("viewerHasUpvoted") ?: false
+        )
+    }
+
+    suspend fun toggleDiscussionUpvote(
+        subjectId: String,
+        currentlyUpvoted: Boolean
+    ): Pair<Boolean, Int> {
+        val op = if (currentlyUpvoted) "removeUpvote" else "addUpvote"
+        val mutation = """
+            mutation(${"$"}subjectId: ID!) {
+              $op(input: { subjectId: ${"$"}subjectId }) {
+                subject {
+                  upvoteCount
+                  viewerHasUpvoted
+                }
+              }
+            }
+        """.trimIndent()
+        val data = execute(mutation, mapOf("subjectId" to subjectId))
+        val subjectObj = data.obj(op)?.obj("subject")
+        val upvoted = subjectObj?.bool("viewerHasUpvoted") ?: !currentlyUpvoted
+        val count = subjectObj?.int("upvoteCount") ?: 0
+        return upvoted to count
+    }
+
+    private fun parseDiscussionCategories(array: JsonArray?): List<DiscussionCategory> {
+        if (array == null) return emptyList()
+        return array.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            DiscussionCategory(
+                id = obj.str("id") ?: return@mapNotNull null,
+                name = obj.str("name") ?: return@mapNotNull null,
+                emoji = obj.str("emoji") ?: "",
+                description = obj.str("description") ?: "",
+                isAnswerable = obj.bool("isAnswerable") ?: false
+            )
+        }
+    }
+
+    private fun parseDiscussionSummary(obj: JsonObject): DiscussionSummary {
+        val catObj = obj.obj("category")
+        val authorObj = obj.obj("author")
+        return DiscussionSummary(
+            id = obj.str("id") ?: "",
+            number = obj.int("number") ?: 0,
+            title = obj.str("title") ?: "",
+            body = obj.str("body") ?: "",
+            category = DiscussionCategory(
+                id = catObj?.str("id") ?: "",
+                name = catObj?.str("name") ?: "General",
+                emoji = catObj?.str("emoji") ?: "",
+                description = catObj?.str("description") ?: "",
+                isAnswerable = catObj?.bool("isAnswerable") ?: false
+            ),
+            authorLogin = authorObj?.str("login") ?: "ghost",
+            authorAvatarUrl = authorObj?.str("avatarUrl") ?: "",
+            createdAt = obj.str("createdAt") ?: "",
+            updatedAt = obj.str("updatedAt") ?: "",
+            commentsCount = obj.obj("comments")?.int("totalCount") ?: 0,
+            upvoteCount = obj.int("upvoteCount") ?: 0,
+            viewerHasUpvoted = obj.bool("viewerHasUpvoted") ?: false,
+            isAnswered = obj.bool("isAnswered") ?: false,
+            isClosed = obj.bool("closed") ?: false,
+            htmlUrl = obj.str("url") ?: ""
+        )
+    }
+
     internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
 
     internal fun JsonObject.arr(key: String): JsonArray? = this[key] as? JsonArray
@@ -730,6 +1019,23 @@ class GitHubGraphQlService(
             primaryLanguage { name color }
             defaultBranchRef { name }
             issues(states: OPEN) { totalCount }
+        """
+
+        private const val DISCUSSION_SUMMARY_FIELDS = """
+            id
+            number
+            title
+            body
+            createdAt
+            updatedAt
+            upvoteCount
+            viewerHasUpvoted
+            isAnswered
+            closed
+            url
+            author { login avatarUrl }
+            category { id name emoji description isAnswerable }
+            comments { totalCount }
         """
     }
 }

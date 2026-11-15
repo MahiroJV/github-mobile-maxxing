@@ -8,6 +8,7 @@ import dev.octoexpress.model.CheckRunSummary
 import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
+import dev.octoexpress.model.DependabotAlertSummary
 import dev.octoexpress.model.FileChangeStatus
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.IssueOrPullKind
@@ -25,6 +26,7 @@ import dev.octoexpress.model.ReleaseAsset
 import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
+import dev.octoexpress.model.SecurityAdvisorySummary
 import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
@@ -925,6 +927,70 @@ class GitHubRestService(
             throw GitHubApiException(res.status.value, "Failed to create release (${res.status.value})")
         }
         return res.body<RestReleaseDto>().toReleaseSummary()
+    }
+
+    suspend fun fetchDependabotAlerts(
+        owner: String,
+        repo: String
+    ): List<DependabotAlertSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/dependabot/alerts") {
+            parameter("per_page", 30)
+            parameter("state", "open")
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load Dependabot alerts (${res.status.value})")
+        }
+        val items = res.body<JsonArray>()
+        return items.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val number = obj["number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+            val adv = obj["security_advisory"] as? JsonObject
+            val vuln = obj["security_vulnerability"] as? JsonObject
+            val dep = obj["dependency"] as? JsonObject
+            val pkg = (dep?.get("package") as? JsonObject) ?: (vuln?.get("package") as? JsonObject)
+            val firstPatched = (vuln?.get("first_patched_version") as? JsonObject)
+                ?.get("identifier")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull }
+            DependabotAlertSummary(
+                number = number,
+                state = obj["state"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "open",
+                severity = vuln?.get("severity")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull }
+                    ?: adv?.get("severity")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull }
+                    ?: "medium",
+                packageName = pkg?.get("name")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "unknown",
+                ecosystem = pkg?.get("ecosystem")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "",
+                summary = adv?.get("summary")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "Security alert #$number",
+                vulnerableVersionRange = vuln?.get("vulnerable_version_range")?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "",
+                patchedVersion = firstPatched,
+                createdAt = obj["created_at"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "",
+                htmlUrl = obj["html_url"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: ""
+            )
+        }
+    }
+
+    suspend fun fetchSecurityAdvisories(
+        owner: String,
+        repo: String
+    ): List<SecurityAdvisorySummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/security-advisories") {
+            parameter("per_page", 20)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load security advisories (${res.status.value})")
+        }
+        val items = res.body<JsonArray>()
+        return items.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val ghsaId = obj["ghsa_id"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull }
+                ?: return@mapNotNull null
+            SecurityAdvisorySummary(
+                ghsaId = ghsaId,
+                summary = obj["summary"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: ghsaId,
+                severity = obj["severity"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "medium",
+                state = obj["state"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "published",
+                publishedAt = obj["published_at"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: "",
+                htmlUrl = obj["html_url"]?.let { if (it is JsonNull) null else it.jsonPrimitive.contentOrNull } ?: ""
+            )
+        }
     }
 
     suspend fun postComment(owner: String, repo: String, number: Int, body: String) {

@@ -9,6 +9,11 @@ import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
 import dev.octoexpress.model.ContributionCalendar
+import dev.octoexpress.model.DependabotAlertSummary
+import dev.octoexpress.model.DiscussionComment
+import dev.octoexpress.model.DiscussionDetail
+import dev.octoexpress.model.DiscussionListData
+import dev.octoexpress.model.DiscussionSummary
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullDetail
@@ -24,8 +29,10 @@ import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.RateLimitInfo
 import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
+import dev.octoexpress.model.RepoSecurityOverview
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
+import dev.octoexpress.model.SecurityAdvisorySummary
 import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.UserProfile
@@ -121,6 +128,7 @@ private data class RepoCommitKey(val owner: String, val repo: String, val sha: S
 private data class RepoCompareKey(val owner: String, val repo: String, val base: String, val head: String)
 private data class WorkflowRunsKey(val owner: String, val repo: String, val workflowId: Long?)
 private data class WorkflowRunIdKey(val owner: String, val repo: String, val runId: Long)
+private data class DiscussionsKey(val owner: String, val repo: String, val categoryId: String?)
 
 class GitHubRepository(
     private val sessionManager: SessionManager,
@@ -169,6 +177,9 @@ class GitHubRepository(
     private val workflowJobsCache = LruMemoryCache<WorkflowRunIdKey, List<WorkflowJobSummary>>(ttl = 30.seconds, maxEntries = 48)
     private val checkRunsCache = LruMemoryCache<RepoPathKey, List<CheckRunSummary>>(ttl = 30.seconds, maxEntries = 48)
     private val releasesCache = LruMemoryCache<RepoKey, List<ReleaseSummary>>(ttl = 120.seconds, maxEntries = 32)
+    private val discussionsCache = LruMemoryCache<DiscussionsKey, DiscussionListData>(ttl = 60.seconds, maxEntries = 32)
+    private val discussionDetailCache = LruMemoryCache<IssuePullKey, DiscussionDetail>(ttl = 45.seconds, maxEntries = 32)
+    private val securityOverviewCache = LruMemoryCache<RepoKey, RepoSecurityOverview>(ttl = 90.seconds, maxEntries = 32)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -209,6 +220,9 @@ class GitHubRepository(
         workflowJobsCache.clear()
         checkRunsCache.clear()
         releasesCache.clear()
+        discussionsCache.clear()
+        discussionDetailCache.clear()
+        securityOverviewCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -1156,5 +1170,137 @@ class GitHubRepository(
     }.onSuccess {
         releasesCache.invalidate(RepoKey(owner, repo))
         tagsCache.invalidate(RepoKey(owner, repo))
+    }
+
+    fun peekDiscussions(owner: String, repo: String, categoryId: String? = null): DiscussionListData? =
+        discussionsCache.peek(DiscussionsKey(owner, repo, categoryId))
+
+    suspend fun getDiscussions(
+        owner: String,
+        repo: String,
+        categoryId: String? = null,
+        forceRefresh: Boolean = false
+    ): Result<DiscussionListData> {
+        val key = DiscussionsKey(owner, repo, categoryId)
+        if (!forceRefresh) {
+            discussionsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            graphQlService.fetchDiscussions(owner, repo, categoryId = categoryId)
+        }.onSuccess {
+            discussionsCache.put(key, it)
+        }
+    }
+
+    fun peekDiscussionDetail(owner: String, repo: String, number: Int): DiscussionDetail? =
+        discussionDetailCache.peek(IssuePullKey(owner, repo, number))
+
+    suspend fun getDiscussionDetail(
+        owner: String,
+        repo: String,
+        number: Int,
+        forceRefresh: Boolean = false
+    ): Result<DiscussionDetail> {
+        val key = IssuePullKey(owner, repo, number)
+        if (!forceRefresh) {
+            discussionDetailCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            graphQlService.fetchDiscussionDetail(owner, repo, number)
+        }.onSuccess {
+            discussionDetailCache.put(key, it)
+        }
+    }
+
+    suspend fun createDiscussion(
+        owner: String,
+        repo: String,
+        repositoryId: String,
+        categoryId: String,
+        title: String,
+        body: String
+    ): Result<DiscussionSummary> = runCatching {
+        graphQlService.createDiscussion(repositoryId, categoryId, title, body)
+    }.onSuccess {
+        discussionsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+    }
+
+    suspend fun addDiscussionComment(
+        owner: String,
+        repo: String,
+        discussionNumber: Int,
+        discussionId: String,
+        body: String,
+        replyToId: String? = null
+    ): Result<DiscussionComment> = runCatching {
+        graphQlService.addDiscussionComment(discussionId, body, replyToId)
+    }.onSuccess {
+        discussionDetailCache.invalidate(IssuePullKey(owner, repo, discussionNumber))
+        discussionsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+    }
+
+    suspend fun toggleDiscussionUpvote(
+        owner: String,
+        repo: String,
+        subjectId: String,
+        currentlyUpvoted: Boolean,
+        discussionNumber: Int? = null
+    ): Result<Pair<Boolean, Int>> = runCatching {
+        graphQlService.toggleDiscussionUpvote(subjectId, currentlyUpvoted)
+    }.onSuccess {
+        discussionsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        if (discussionNumber != null) {
+            discussionDetailCache.invalidate(IssuePullKey(owner, repo, discussionNumber))
+        }
+    }
+
+    fun peekRepoSecurityOverview(owner: String, repo: String): RepoSecurityOverview? =
+        securityOverviewCache.peek(RepoKey(owner, repo))
+
+    suspend fun getRepoSecurityOverview(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<RepoSecurityOverview> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            securityOverviewCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            coroutineScope {
+                val alertsDeferred = async { runCatching { restService.fetchDependabotAlerts(owner, repo) } }
+                val advisoriesDeferred = async { runCatching { restService.fetchSecurityAdvisories(owner, repo) } }
+
+                val alertsRes = alertsDeferred.await()
+                val advisoriesRes = advisoriesDeferred.await()
+
+                var notice: String? = null
+                val alerts: List<DependabotAlertSummary> = alertsRes.getOrElse { err ->
+                    val code = (err as? GitHubApiException)?.statusCode
+                    when (code) {
+                        403, 404 -> {
+                            notice = if (code == 403) {
+                                "Dependabot alerts require repository admin or security_events permission."
+                            } else {
+                                "Dependabot vulnerability alerts are not enabled for this repository."
+                            }
+                            emptyList()
+                        }
+                        else -> {
+                            notice = err.message ?: "Unable to fetch Dependabot alerts"
+                            emptyList()
+                        }
+                    }
+                }
+                val advisories: List<SecurityAdvisorySummary> = advisoriesRes.getOrElse { emptyList() }
+                RepoSecurityOverview(
+                    alerts = alerts,
+                    advisories = advisories,
+                    alertsAccessNotice = notice
+                )
+            }
+        }.onSuccess {
+            securityOverviewCache.put(key, it)
+        }
     }
 }

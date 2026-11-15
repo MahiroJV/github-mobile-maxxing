@@ -97,6 +97,7 @@ import com.composables.icons.lucide.GitMerge
 import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Play
 import com.composables.icons.lucide.Plus
@@ -114,6 +115,8 @@ import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
+import dev.octoexpress.model.DiscussionDetail
+import dev.octoexpress.model.DiscussionListData
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.GlobalSearchKind
 import dev.octoexpress.model.IssueOrPullKind
@@ -122,6 +125,7 @@ import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
+import dev.octoexpress.model.RepoSecurityOverview
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
@@ -159,6 +163,8 @@ private enum class RepoDetailTab(val label: String) {
     COMMITS("Commits"),
     ACTIONS("Actions"),
     RELEASES("Releases"),
+    DISCUSSIONS("Discussions"),
+    SECURITY("Security"),
     ISSUES("Issues"),
     PULLS("PRs")
 }
@@ -1127,6 +1133,102 @@ fun RepoDetailScreen(
     var showCreateReleaseDialog by remember { mutableStateOf(false) }
     var creatingRelease by remember { mutableStateOf(false) }
     var createReleaseError by remember { mutableStateOf<String?>(null) }
+    var selectedDiscussionCategoryId by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var discussionsData by remember(repo.fullName) {
+        mutableStateOf(container.repository.peekDiscussions(repo.owner, repo.name))
+    }
+    var discussionsLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var discussionsError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var discussionsRequestSeq by remember(repo.fullName) { mutableStateOf(0) }
+    var openedDiscussionNumber by remember(repo.fullName) { mutableStateOf<Int?>(null) }
+    var discussionDetail by remember(repo.fullName) { mutableStateOf<DiscussionDetail?>(null) }
+    var discussionDetailLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var discussionDetailError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var discussionCommentBusy by remember(repo.fullName) { mutableStateOf(false) }
+    var showCreateDiscussionDialog by remember { mutableStateOf(false) }
+    var creatingDiscussion by remember { mutableStateOf(false) }
+    var createDiscussionError by remember { mutableStateOf<String?>(null) }
+    var securityOverview by remember(repo.fullName) {
+        mutableStateOf(container.repository.peekRepoSecurityOverview(repo.owner, repo.name))
+    }
+    var securityLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var securityError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+
+    fun loadDiscussions(categoryId: String? = selectedDiscussionCategoryId, forceRefresh: Boolean = false) {
+        val reqSeq = ++discussionsRequestSeq
+        scope.launch {
+            val cached = container.repository.peekDiscussions(repo.owner, repo.name, categoryId)
+            if (cached != null) {
+                discussionsData = cached
+                discussionsLoading = false
+            } else {
+                discussionsLoading = true
+            }
+            discussionsError = null
+            container.repository.getDiscussions(repo.owner, repo.name, categoryId, forceRefresh = forceRefresh)
+                .onSuccess {
+                    if (reqSeq == discussionsRequestSeq) {
+                        discussionsData = it
+                        discussionsLoading = false
+                    }
+                }
+                .onFailure {
+                    if (reqSeq == discussionsRequestSeq) {
+                        discussionsError = it.message ?: "Failed to load discussions"
+                        discussionsLoading = false
+                    }
+                }
+        }
+    }
+
+    fun openDiscussion(number: Int, forceRefresh: Boolean = false) {
+        openedDiscussionNumber = number
+        scope.launch {
+            val cached = container.repository.peekDiscussionDetail(repo.owner, repo.name, number)
+            if (cached != null) {
+                discussionDetail = cached
+                discussionDetailLoading = false
+            } else {
+                discussionDetailLoading = true
+            }
+            discussionDetailError = null
+            container.repository.getDiscussionDetail(repo.owner, repo.name, number, forceRefresh = forceRefresh)
+                .onSuccess {
+                    if (openedDiscussionNumber == number) {
+                        discussionDetail = it
+                        discussionDetailLoading = false
+                    }
+                }
+                .onFailure {
+                    if (openedDiscussionNumber == number) {
+                        discussionDetailError = it.message ?: "Failed to load discussion"
+                        discussionDetailLoading = false
+                    }
+                }
+        }
+    }
+
+    fun loadSecurityOverview(forceRefresh: Boolean = false) {
+        scope.launch {
+            val cached = container.repository.peekRepoSecurityOverview(repo.owner, repo.name)
+            if (cached != null) {
+                securityOverview = cached
+                securityLoading = false
+            } else {
+                securityLoading = true
+            }
+            securityError = null
+            container.repository.getRepoSecurityOverview(repo.owner, repo.name, forceRefresh = forceRefresh)
+                .onSuccess {
+                    securityOverview = it
+                    securityLoading = false
+                }
+                .onFailure {
+                    securityError = it.message ?: "Failed to load security overview"
+                    securityLoading = false
+                }
+        }
+    }
 
     fun loadReleases(forceRefresh: Boolean = false) {
         scope.launch {
@@ -1367,6 +1469,10 @@ fun RepoDetailScreen(
                 openedRun = null
                 runJobs = null
             }
+            activeTab == RepoDetailTab.DISCUSSIONS && openedDiscussionNumber != null -> {
+                openedDiscussionNumber = null
+                discussionDetail = null
+            }
             activeTab == RepoDetailTab.COMMITS && openedCommitSha != null -> {
                 openedCommitSha = null
                 openedCommitDetail = null
@@ -1444,6 +1550,12 @@ fun RepoDetailScreen(
         }
         if (activeTab == RepoDetailTab.RELEASES) {
             loadReleases(forceRefresh = false)
+        }
+        if (activeTab == RepoDetailTab.DISCUSSIONS && openedDiscussionNumber == null) {
+            loadDiscussions(selectedDiscussionCategoryId, forceRefresh = false)
+        }
+        if (activeTab == RepoDetailTab.SECURITY) {
+            loadSecurityOverview(forceRefresh = false)
         }
     }
 
@@ -1682,6 +1794,8 @@ fun RepoDetailScreen(
                             RepoDetailTab.COMMITS -> Lucide.GitCommitHorizontal
                             RepoDetailTab.ACTIONS -> Lucide.Play
                             RepoDetailTab.RELEASES -> Lucide.Tag
+                            RepoDetailTab.DISCUSSIONS -> Lucide.MessageSquare
+                            RepoDetailTab.SECURITY -> Lucide.ShieldCheck
                             RepoDetailTab.ISSUES -> Lucide.CircleDot
                             RepoDetailTab.PULLS -> Lucide.GitPullRequest
                         }
@@ -1696,6 +1810,9 @@ fun RepoDetailScreen(
                                 if (tab != RepoDetailTab.ACTIONS) {
                                     openedRun = null
                                     openedLogJob = null
+                                }
+                                if (tab != RepoDetailTab.DISCUSSIONS) {
+                                    openedDiscussionNumber = null
                                 }
                             },
                             leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp)) },
@@ -2017,6 +2134,110 @@ fun RepoDetailScreen(
                 )
             }
 
+            RepoDetailTab.DISCUSSIONS -> {
+                val activeNum = openedDiscussionNumber
+                if (activeNum != null) {
+                    DiscussionDetailView(
+                        detail = discussionDetail,
+                        isLoading = discussionDetailLoading,
+                        commentBusy = discussionCommentBusy,
+                        errorMsg = discussionDetailError,
+                        onBack = {
+                            openedDiscussionNumber = null
+                            discussionDetail = null
+                        },
+                        onRefresh = { openDiscussion(activeNum, forceRefresh = true) },
+                        onToggleUpvote = { dSummary ->
+                            scope.launch {
+                                container.repository.toggleDiscussionUpvote(
+                                    owner = repo.owner,
+                                    repo = repo.name,
+                                    subjectId = dSummary.id,
+                                    currentlyUpvoted = dSummary.viewerHasUpvoted,
+                                    discussionNumber = dSummary.number
+                                ).onSuccess { (upvoted, count) ->
+                                    discussionDetail = discussionDetail?.let { cur ->
+                                        cur.copy(summary = cur.summary.copy(viewerHasUpvoted = upvoted, upvoteCount = count))
+                                    }
+                                    discussionsData = discussionsData?.let { cur ->
+                                        cur.copy(
+                                            discussions = cur.discussions.map {
+                                                if (it.id == dSummary.id) it.copy(viewerHasUpvoted = upvoted, upvoteCount = count) else it
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        onSubmitComment = { commentBody, replyToId ->
+                            val dId = discussionDetail?.summary?.id ?: return@DiscussionDetailView
+                            scope.launch {
+                                discussionCommentBusy = true
+                                container.repository.addDiscussionComment(
+                                    owner = repo.owner,
+                                    repo = repo.name,
+                                    discussionNumber = activeNum,
+                                    discussionId = dId,
+                                    body = commentBody,
+                                    replyToId = replyToId
+                                ).onSuccess {
+                                    discussionCommentBusy = false
+                                    openDiscussion(activeNum, forceRefresh = true)
+                                }.onFailure { err ->
+                                    discussionCommentBusy = false
+                                    discussionDetailError = err.message ?: "Failed to post comment"
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    RepoDiscussionsTabContent(
+                        data = discussionsData,
+                        selectedCategoryId = selectedDiscussionCategoryId,
+                        onSelectCategory = { catId ->
+                            selectedDiscussionCategoryId = catId
+                            loadDiscussions(catId, forceRefresh = false)
+                        },
+                        isLoading = discussionsLoading,
+                        errorMsg = discussionsError,
+                        onRefresh = { loadDiscussions(selectedDiscussionCategoryId, forceRefresh = true) },
+                        onOpenCreateDiscussion = {
+                            createDiscussionError = null
+                            showCreateDiscussionDialog = true
+                        },
+                        onOpenDiscussion = { discussion -> openDiscussion(discussion.number) },
+                        onToggleUpvote = { dSummary ->
+                            scope.launch {
+                                container.repository.toggleDiscussionUpvote(
+                                    owner = repo.owner,
+                                    repo = repo.name,
+                                    subjectId = dSummary.id,
+                                    currentlyUpvoted = dSummary.viewerHasUpvoted,
+                                    discussionNumber = dSummary.number
+                                ).onSuccess { (upvoted, count) ->
+                                    discussionsData = discussionsData?.let { cur ->
+                                        cur.copy(
+                                            discussions = cur.discussions.map {
+                                                if (it.id == dSummary.id) it.copy(viewerHasUpvoted = upvoted, upvoteCount = count) else it
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+
+            RepoDetailTab.SECURITY -> {
+                RepoSecurityTabContent(
+                    overview = securityOverview,
+                    isLoading = securityLoading,
+                    errorMsg = securityError,
+                    onRefresh = { loadSecurityOverview(forceRefresh = true) }
+                )
+            }
+
             RepoDetailTab.ISSUES -> {
                 RepoIssuesOrPullsTabContent(
                     kindLabel = "Issues",
@@ -2082,6 +2303,43 @@ fun RepoDetailScreen(
                     }.onFailure { err ->
                         creatingRelease = false
                         createReleaseError = err.message ?: "Failed to create release"
+                    }
+                }
+            }
+        )
+    }
+
+    if (showCreateDiscussionDialog) {
+        val discData = discussionsData
+        CreateDiscussionDialog(
+            categories = discData?.categories.orEmpty(),
+            isSubmitting = creatingDiscussion,
+            errorMsg = createDiscussionError,
+            onDismiss = { showCreateDiscussionDialog = false },
+            onCreate = { categoryId, title, body ->
+                val repoId = discData?.repositoryId
+                if (repoId.isNullOrBlank()) {
+                    createDiscussionError = "Repository metadata not ready yet"
+                    return@CreateDiscussionDialog
+                }
+                scope.launch {
+                    creatingDiscussion = true
+                    createDiscussionError = null
+                    container.repository.createDiscussion(
+                        owner = repo.owner,
+                        repo = repo.name,
+                        repositoryId = repoId,
+                        categoryId = categoryId,
+                        title = title,
+                        body = body
+                    ).onSuccess { created ->
+                        creatingDiscussion = false
+                        showCreateDiscussionDialog = false
+                        loadDiscussions(selectedDiscussionCategoryId, forceRefresh = true)
+                        openDiscussion(created.number, forceRefresh = true)
+                    }.onFailure { err ->
+                        creatingDiscussion = false
+                        createDiscussionError = err.message ?: "Failed to create discussion"
                     }
                 }
             }
