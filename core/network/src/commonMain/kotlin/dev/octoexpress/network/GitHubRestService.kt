@@ -2,8 +2,11 @@ package dev.octoexpress.network
 
 import dev.octoexpress.model.ActivityEvent
 import dev.octoexpress.model.ActivityEventKind
+import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.BranchRef
 import dev.octoexpress.model.CodeSearchHit
+import dev.octoexpress.model.CommitDetail
+import dev.octoexpress.model.CommitSummary
 import dev.octoexpress.model.FileChangeStatus
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.IssueOrPullKind
@@ -19,6 +22,7 @@ import dev.octoexpress.model.OrganizationSummary
 import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
+import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
 import dev.octoexpress.model.UserProfile
@@ -36,6 +40,7 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLPathPart
 import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -204,6 +209,99 @@ private data class RestEventDto(
     val repo: RestEventRepoDto = RestEventRepoDto(),
     val payload: JsonObject? = null,
     @SerialName("created_at") val createdAt: String = ""
+)
+
+@Serializable
+private data class RestCommitAuthorMetaDto(
+    val name: String = "",
+    val date: String = ""
+)
+
+@Serializable
+private data class RestCommitVerificationDto(
+    val verified: Boolean = false,
+    val reason: String? = null
+)
+
+@Serializable
+private data class RestCommitMetaDto(
+    val message: String = "",
+    val author: RestCommitAuthorMetaDto? = null,
+    val committer: RestCommitAuthorMetaDto? = null,
+    val verification: RestCommitVerificationDto? = null
+)
+
+@Serializable
+private data class RestCommitUserDto(
+    val login: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String = ""
+)
+
+@Serializable
+private data class RestCommitParentDto(
+    val sha: String = ""
+)
+
+@Serializable
+private data class RestCommitStatsDto(
+    val additions: Int = 0,
+    val deletions: Int = 0,
+    val total: Int = 0
+)
+
+@Serializable
+private data class RestCommitDto(
+    val sha: String = "",
+    val commit: RestCommitMetaDto = RestCommitMetaDto(),
+    val author: RestCommitUserDto? = null,
+    val parents: List<RestCommitParentDto> = emptyList(),
+    val stats: RestCommitStatsDto? = null,
+    val files: List<PullFileDto> = emptyList(),
+    @SerialName("html_url") val htmlUrl: String = ""
+) {
+    fun toCommitSummary(): CommitSummary {
+        val normalized = commit.message.trimEnd()
+        val splitIdx = normalized.indexOf('\n')
+        val headline = if (splitIdx >= 0) normalized.substring(0, splitIdx).trim() else normalized
+        val body = if (splitIdx >= 0) normalized.substring(splitIdx + 1).trim() else ""
+        return CommitSummary(
+            sha = sha,
+            shortSha = sha.take(7),
+            headline = headline.ifBlank { "(no commit message)" },
+            body = body,
+            authorName = commit.author?.name?.ifBlank { author?.login ?: "unknown" }
+                ?: author?.login ?: "unknown",
+            authorLogin = author?.login,
+            authorAvatarUrl = author?.avatarUrl.orEmpty(),
+            committedAt = commit.committer?.date?.ifBlank { commit.author?.date.orEmpty() }
+                ?: commit.author?.date.orEmpty(),
+            parentShas = parents.mapNotNull { it.sha.takeIf(String::isNotBlank) },
+            verificationReason = commit.verification?.reason,
+            isVerified = commit.verification?.verified == true
+        )
+    }
+}
+
+@Serializable
+private data class RestTagCommitDto(
+    val sha: String = ""
+)
+
+@Serializable
+private data class RestTagDto(
+    val name: String = "",
+    val commit: RestTagCommitDto = RestTagCommitDto()
+)
+
+@Serializable
+private data class RestCompareDto(
+    val status: String = "identical",
+    @SerialName("ahead_by") val aheadBy: Int = 0,
+    @SerialName("behind_by") val behindBy: Int = 0,
+    @SerialName("total_commits") val totalCommits: Int = 0,
+    val commits: List<RestCommitDto> = emptyList(),
+    val files: List<PullFileDto> = emptyList(),
+    @SerialName("html_url") val htmlUrl: String = ""
 )
 
 @Serializable
@@ -410,17 +508,88 @@ class GitHubRestService(
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to load PR files (${res.status.value})")
         }
-        return res.body<List<PullFileDto>>().map { dto ->
-            PullFileChange(
-                filename = dto.filename,
-                previousFilename = dto.previousFilename,
-                status = parseFileStatus(dto.status),
-                additions = dto.additions,
-                deletions = dto.deletions,
-                patch = dto.patch,
-                hunks = DiffParser.parse(dto.patch)
-            )
+        return res.body<List<PullFileDto>>().map { it.toPullFileChange() }
+    }
+
+    private fun PullFileDto.toPullFileChange(): PullFileChange = PullFileChange(
+        filename = filename,
+        previousFilename = previousFilename,
+        status = parseFileStatus(status),
+        additions = additions,
+        deletions = deletions,
+        patch = patch,
+        hunks = DiffParser.parse(patch)
+    )
+
+    suspend fun fetchRepoCommits(
+        owner: String,
+        repo: String,
+        ref: String? = null,
+        path: String? = null,
+        perPage: Int = 30
+    ): List<CommitSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/commits") {
+            ref?.takeIf { it.isNotBlank() }?.let { parameter("sha", it) }
+            path?.takeIf { it.isNotBlank() }?.let { parameter("path", it) }
+            parameter("per_page", perPage)
         }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load commits (${res.status.value})")
+        }
+        return res.body<List<RestCommitDto>>().map { it.toCommitSummary() }
+    }
+
+    suspend fun fetchCommitDetail(owner: String, repo: String, sha: String): CommitDetail {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/commits/$sha")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load commit $sha (${res.status.value})")
+        }
+        val dto = res.body<RestCommitDto>()
+        val files = dto.files.map { it.toPullFileChange() }
+        return CommitDetail(
+            summary = dto.toCommitSummary(),
+            additions = dto.stats?.additions ?: files.sumOf { it.additions },
+            deletions = dto.stats?.deletions ?: files.sumOf { it.deletions },
+            changedFilesCount = files.size,
+            files = files,
+            htmlUrl = dto.htmlUrl
+        )
+    }
+
+    suspend fun fetchRepoTags(owner: String, repo: String, perPage: Int = 30): List<TagRef> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/tags") {
+            parameter("per_page", perPage)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load tags (${res.status.value})")
+        }
+        return res.body<List<RestTagDto>>().map { TagRef(name = it.name, commitSha = it.commit.sha) }
+    }
+
+    suspend fun compareRefs(
+        owner: String,
+        repo: String,
+        base: String,
+        head: String
+    ): BranchCompareResult {
+        val encodedBase = base.encodeURLPathPart()
+        val encodedHead = head.encodeURLPathPart()
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/compare/${encodedBase}...${encodedHead}")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to compare $base...$head (${res.status.value})")
+        }
+        val dto = res.body<RestCompareDto>()
+        return BranchCompareResult(
+            baseRef = base,
+            headRef = head,
+            status = dto.status,
+            aheadBy = dto.aheadBy,
+            behindBy = dto.behindBy,
+            totalCommits = dto.totalCommits,
+            commits = dto.commits.map { it.toCommitSummary() },
+            files = dto.files.map { it.toPullFileChange() },
+            htmlUrl = dto.htmlUrl
+        )
     }
 
     suspend fun postComment(owner: String, repo: String, number: Int, body: String) {

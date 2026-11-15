@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,6 +38,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,9 +49,11 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +75,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.ArrowLeftRight
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleDot
@@ -83,6 +88,7 @@ import com.composables.icons.lucide.Flame
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.GitBranch
+import com.composables.icons.lucide.GitCommitHorizontal
 import com.composables.icons.lucide.GitFork
 import com.composables.icons.lucide.GitMerge
 import com.composables.icons.lucide.GitPullRequest
@@ -92,12 +98,17 @@ import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.Star
+import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
 import dev.octoexpress.app.IssuePullTarget
+import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.CodeSearchHit
+import dev.octoexpress.model.CommitDetail
+import dev.octoexpress.model.CommitSummary
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.GlobalSearchKind
 import dev.octoexpress.model.IssueOrPullKind
@@ -106,6 +117,7 @@ import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
+import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
 import dev.octoexpress.model.UserSummary
@@ -119,6 +131,7 @@ import dev.octoexpress.ui.components.OctoStarAmber
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.StarActionButton
 import dev.octoexpress.ui.components.UserAvatar
+import dev.octoexpress.ui.components.diffFileLazyItems
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
 import dev.octoexpress.ui.components.formatCompactCount
 import dev.octoexpress.ui.components.parseHexColor
@@ -134,6 +147,7 @@ private enum class RepoListTab(val label: String) {
 
 private enum class RepoDetailTab(val label: String) {
     CODE("Code"),
+    COMMITS("Commits"),
     ISSUES("Issues"),
     PULLS("PRs")
 }
@@ -1063,6 +1077,77 @@ fun RepoDetailScreen(
     var contributorsList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
     var peopleLoading by remember { mutableStateOf(false) }
 
+    var repoTags by remember(repo.fullName) { mutableStateOf<List<TagRef>>(emptyList()) }
+    var repoCommits by remember(repo.fullName, currentRef) {
+        mutableStateOf(container.repository.peekRepoCommits(repo.owner, repo.name, currentRef))
+    }
+    var commitsLoading by remember(repo.fullName, currentRef) { mutableStateOf(false) }
+    var commitsError by remember(repo.fullName, currentRef) { mutableStateOf<String?>(null) }
+
+    var openedCommitSha by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var openedCommitDetail by remember(repo.fullName) { mutableStateOf<CommitDetail?>(null) }
+    var commitDetailLoading by remember(repo.fullName) { mutableStateOf(false) }
+
+    var showCompareView by remember(repo.fullName) { mutableStateOf(false) }
+    var compareBase by remember(repo.fullName) { mutableStateOf(repo.defaultBranch) }
+    var compareHead by remember(repo.fullName) { mutableStateOf(currentRef) }
+    var compareResult by remember(repo.fullName) { mutableStateOf<BranchCompareResult?>(null) }
+    var compareLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var compareError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+
+    fun loadCommits(ref: String, forceRefresh: Boolean = false) {
+        scope.launch {
+            val cached = container.repository.peekRepoCommits(repo.owner, repo.name, ref)
+            if (cached != null) {
+                repoCommits = cached
+                commitsLoading = false
+            } else {
+                commitsLoading = true
+            }
+            commitsError = null
+            container.repository.getRepoCommits(repo.owner, repo.name, ref, forceRefresh = forceRefresh)
+                .onSuccess {
+                    repoCommits = it
+                    commitsLoading = false
+                }
+                .onFailure {
+                    commitsError = it.message ?: "Failed to load commits"
+                    commitsLoading = false
+                }
+        }
+    }
+
+    fun openCommit(sha: String) {
+        openedCommitSha = sha
+        scope.launch {
+            val cached = container.repository.peekCommitDetail(repo.owner, repo.name, sha)
+            if (cached != null) {
+                openedCommitDetail = cached
+                commitDetailLoading = false
+            } else {
+                openedCommitDetail = null
+                commitDetailLoading = true
+            }
+            container.repository.getCommitDetail(repo.owner, repo.name, sha, forceRefresh = false)
+                .onSuccess { openedCommitDetail = it }
+                .onFailure { onMessage(it.message ?: "Failed to load commit diff") }
+            commitDetailLoading = false
+        }
+    }
+
+    fun runCompare(base: String, head: String, forceRefresh: Boolean = false) {
+        compareBase = base
+        compareHead = head
+        scope.launch {
+            compareLoading = true
+            compareError = null
+            container.repository.compareRefs(repo.owner, repo.name, base, head, forceRefresh = forceRefresh)
+                .onSuccess { compareResult = it }
+                .onFailure { compareError = it.message ?: "Compare failed" }
+            compareLoading = false
+        }
+    }
+
     fun openPeopleTab(tab: RepoPeopleTab) {
         peopleTab = tab
         showPeopleDialog = true
@@ -1167,9 +1252,14 @@ fun RepoDetailScreen(
         }
     }
 
-    // Android System Back navigates file -> parent dir -> repo list
+    // Android System Back navigates commit -> compare -> file -> parent dir -> repo list
     BackHandler(enabled = true) {
         when {
+            activeTab == RepoDetailTab.COMMITS && openedCommitSha != null -> {
+                openedCommitSha = null
+                openedCommitDetail = null
+            }
+            activeTab == RepoDetailTab.COMMITS && showCompareView -> showCompareView = false
             openedFile != null -> openedFile = null
             activeTab == RepoDetailTab.CODE && currentPath.isNotBlank() -> {
                 val parent = currentPath.substringBeforeLast('/', "")
@@ -1194,6 +1284,8 @@ fun RepoDetailScreen(
                 isStarred = it.summary.viewerHasStarred
                 resolvedRef = it.summary.defaultBranch
                 currentRef = resolvedRef
+                compareBase = resolvedRef
+                compareHead = resolvedRef
             }
             readmeJob.await().onSuccess { readme = it }
             entriesJob.await().onSuccess { entries = it }
@@ -1204,10 +1296,18 @@ fun RepoDetailScreen(
             isLoading = false
         }
 
-        // Prefetch Open Issues, Open PRs & Watch state in background
+        // Prefetch Open Issues, Open PRs, Tags, Commits & Watch state in background
         scope.launch {
             container.repository.getRepoSubscription(repo.owner, repo.name)
                 .onSuccess { isWatching = it }
+        }
+        scope.launch {
+            container.repository.getRepoTags(repo.owner, repo.name)
+                .onSuccess { repoTags = it }
+        }
+        scope.launch {
+            container.repository.getRepoCommits(repo.owner, repo.name, resolvedRef)
+                .onSuccess { if (currentRef == resolvedRef && repoCommits == null) repoCommits = it }
         }
         scope.launch {
             container.repository.getRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = false, stateFilter = IssueStateFilter.OPEN)
@@ -1216,6 +1316,12 @@ fun RepoDetailScreen(
         scope.launch {
             container.repository.getRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = true, stateFilter = IssueStateFilter.OPEN)
                 .onSuccess { if (pullStateFilter == IssueStateFilter.OPEN && repoPulls == null) repoPulls = it }
+        }
+    }
+
+    LaunchedEffect(activeTab, currentRef, repo.fullName) {
+        if (activeTab == RepoDetailTab.COMMITS && !showCompareView && openedCommitSha == null) {
+            loadCommits(currentRef, forceRefresh = false)
         }
     }
 
@@ -1364,20 +1470,37 @@ fun RepoDetailScreen(
 
                 Spacer(Modifier.height(8.dp))
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Box {
-                        FilledTonalButton(onClick = { showBranchMenu = true }) {
+                        FilledTonalButton(
+                            onClick = { showBranchMenu = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
                             Icon(Lucide.GitBranch, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(currentRef)
+                            Text(currentRef, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(Modifier.width(4.dp))
                             Icon(Lucide.ChevronDown, contentDescription = null, modifier = Modifier.size(15.dp))
                         }
                         DropdownMenu(expanded = showBranchMenu, onDismissRequest = { showBranchMenu = false }) {
                             val branches = detail?.branches.orEmpty()
-                            if (branches.isEmpty()) {
+                            val selectRef: (String) -> Unit = { selected ->
+                                showBranchMenu = false
+                                currentRef = selected
+                                openedCommitSha = null
+                                loadDirectory("", selected)
+                                if (activeTab == RepoDetailTab.COMMITS && !showCompareView) {
+                                    loadCommits(selected, forceRefresh = false)
+                                }
+                                scope.launch {
+                                    container.repository.getReadme(repo.owner, repo.name, selected)
+                                        .onSuccess { readme = it }
+                                }
+                            }
+                            if (branches.isEmpty() && repoTags.isEmpty()) {
                                 DropdownMenuItem(
                                     text = { Text(currentRef) },
                                     onClick = { showBranchMenu = false }
@@ -1385,37 +1508,69 @@ fun RepoDetailScreen(
                             } else {
                                 branches.forEach { b ->
                                     DropdownMenuItem(
+                                        leadingIcon = { Icon(Lucide.GitBranch, contentDescription = null, modifier = Modifier.size(15.dp)) },
                                         text = { Text(b.name) },
-                                        onClick = {
-                                            showBranchMenu = false
-                                            currentRef = b.name
-                                            loadDirectory("", b.name)
-                                            scope.launch {
-                                                container.repository.getReadme(repo.owner, repo.name, b.name)
-                                                    .onSuccess { readme = it }
-                                            }
-                                        }
+                                        onClick = { selectRef(b.name) }
                                     )
+                                }
+                                if (repoTags.isNotEmpty()) {
+                                    HorizontalDivider()
+                                    repoTags.take(20).forEach { tag ->
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                                            text = { Text(tag.name) },
+                                            onClick = { selectRef(tag.name) }
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
 
-                    OctoConnectedButtonGroup(
-                        options = RepoDetailTab.entries,
-                        selected = activeTab,
-                        onSelect = { activeTab = it },
-                        labelProvider = { it.label },
-                        iconProvider = {
-                            when (it) {
-                                RepoDetailTab.CODE -> Lucide.Folder
-                                RepoDetailTab.ISSUES -> Lucide.CircleDot
-                                RepoDetailTab.PULLS -> Lucide.GitPullRequest
+                    OutlinedButton(
+                        onClick = {
+                            openedCommitSha = null
+                            showCompareView = true
+                            activeTab = RepoDetailTab.COMMITS
+                            val branches = detail?.branches.orEmpty()
+                            val base = detail?.summary?.defaultBranch ?: repo.defaultBranch
+                            val head = if (currentRef != base) currentRef else {
+                                branches.firstOrNull { it.name != base }?.name ?: currentRef
                             }
+                            compareBase = base
+                            compareHead = head
+                            runCompare(base, head)
                         },
-                        modifier = Modifier.weight(1f)
-                    )
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Lucide.ArrowLeftRight, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Compare", maxLines = 1, softWrap = false)
+                    }
                 }
+
+                Spacer(Modifier.height(8.dp))
+                OctoConnectedButtonGroup(
+                    options = RepoDetailTab.entries,
+                    selected = activeTab,
+                    onSelect = {
+                        activeTab = it
+                        if (it != RepoDetailTab.COMMITS) {
+                            showCompareView = false
+                            openedCommitSha = null
+                        }
+                    },
+                    labelProvider = { it.label },
+                    iconProvider = {
+                        when (it) {
+                            RepoDetailTab.CODE -> Lucide.Folder
+                            RepoDetailTab.COMMITS -> Lucide.GitCommitHorizontal
+                            RepoDetailTab.ISSUES -> Lucide.CircleDot
+                            RepoDetailTab.PULLS -> Lucide.GitPullRequest
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 if (isLoading) {
                     Spacer(Modifier.height(8.dp))
@@ -1569,6 +1724,70 @@ fun RepoDetailScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            RepoDetailTab.COMMITS -> {
+                val allRefs = remember(detail?.branches, repoTags, currentRef, repo.defaultBranch) {
+                    buildList {
+                        addAll(detail?.branches.orEmpty().map { it.name })
+                        addAll(repoTags.map { it.name })
+                        add(currentRef)
+                        add(repo.defaultBranch)
+                    }.distinct()
+                }
+                when {
+                    openedCommitSha != null -> {
+                        RepoCommitDetailView(
+                            sha = openedCommitSha!!,
+                            detail = openedCommitDetail,
+                            isLoading = commitDetailLoading,
+                            onBack = {
+                                openedCommitSha = null
+                                openedCommitDetail = null
+                            },
+                            onOpenParent = { parentSha -> openCommit(parentSha) },
+                            onOpenUser = onOpenUser
+                        )
+                    }
+                    showCompareView -> {
+                        RepoBranchCompareView(
+                            availableRefs = allRefs,
+                            baseRef = compareBase,
+                            headRef = compareHead,
+                            result = compareResult,
+                            isLoading = compareLoading,
+                            errorMsg = compareError,
+                            onSelectBase = { base -> compareBase = base; runCompare(base, compareHead) },
+                            onSelectHead = { head -> compareHead = head; runCompare(compareBase, head) },
+                            onSwapRefs = {
+                                val nextBase = compareHead
+                                val nextHead = compareBase
+                                compareBase = nextBase
+                                compareHead = nextHead
+                                runCompare(nextBase, nextHead)
+                            },
+                            onRefresh = { runCompare(compareBase, compareHead, forceRefresh = true) },
+                            onBackToCommits = { showCompareView = false },
+                            onOpenCommit = { sha -> openCommit(sha) },
+                            onOpenUser = onOpenUser
+                        )
+                    }
+                    else -> {
+                        RepoCommitsTabContent(
+                            currentRef = currentRef,
+                            commits = repoCommits,
+                            isLoading = commitsLoading,
+                            errorMsg = commitsError,
+                            onRefresh = { loadCommits(currentRef, forceRefresh = true) },
+                            onOpenCompare = {
+                                showCompareView = true
+                                runCompare(compareBase, compareHead)
+                            },
+                            onOpenCommit = { commit -> openCommit(commit.sha) },
+                            onOpenUser = onOpenUser
+                        )
                     }
                 }
             }
@@ -1866,6 +2085,489 @@ private fun RepoIssuesOrPullsTabContent(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RepoCommitsTabContent(
+    currentRef: String,
+    commits: List<CommitSummary>?,
+    isLoading: Boolean,
+    errorMsg: String?,
+    onRefresh: () -> Unit,
+    onOpenCompare: () -> Unit,
+    onOpenCommit: (CommitSummary) -> Unit,
+    onOpenUser: (String) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ExpressiveStatusPill(
+                label = currentRef,
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                icon = Lucide.GitBranch
+            )
+            OutlinedButton(
+                onClick = onOpenCompare,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Icon(Lucide.ArrowLeftRight, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Compare", maxLines = 1, softWrap = false)
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onRefresh) {
+                Icon(Lucide.RefreshCw, contentDescription = "Refresh Commits", modifier = Modifier.size(18.dp))
+            }
+        }
+
+        if (isLoading && !commits.isNullOrEmpty()) {
+            OctoWavyProgress(modifier = Modifier.padding(horizontal = 16.dp))
+        }
+
+        PullToRefreshBox(
+            isRefreshing = isLoading && !commits.isNullOrEmpty(),
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            when {
+                isLoading && commits == null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        OctoLoadingState(message = "Loading commits...")
+                    }
+                }
+                errorMsg != null && commits.isNullOrEmpty() -> {
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(errorMsg, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(10.dp))
+                        FilledTonalButton(onClick = onRefresh) { Text("Retry") }
+                    }
+                }
+                commits.isNullOrEmpty() -> {
+                    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                        Text("No commits found for $currentRef", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(items = commits, key = { it.sha }, contentType = { "commit_summary" }) { commit ->
+                            CommitSummaryCard(
+                                commit = commit,
+                                onClick = { onOpenCommit(commit) },
+                                onOpenUser = onOpenUser
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommitSummaryCard(
+    commit: CommitSummary,
+    onClick: () -> Unit,
+    onOpenUser: (String) -> Unit
+) {
+    ElevatedCard(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            UserAvatar(
+                avatarUrl = commit.authorAvatarUrl,
+                login = commit.authorLogin ?: commit.authorName,
+                sizeDp = 34,
+                modifier = Modifier.clickable(enabled = !commit.authorLogin.isNullOrBlank()) {
+                    commit.authorLogin?.let(onOpenUser)
+                }
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = commit.headline,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = commit.shortSha,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    if (commit.isVerified) {
+                        Icon(
+                            Lucide.ShieldCheck,
+                            contentDescription = "Verified commit",
+                            tint = Color(0xFF16A34A),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Text(
+                        text = commit.authorLogin?.let { "@$it" } ?: commit.authorName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (commit.committedAt.length >= 10) {
+                        Text(
+                            text = commit.committedAt.take(10),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RepoCommitDetailView(
+    sha: String,
+    detail: CommitDetail?,
+    isLoading: Boolean,
+    onBack: () -> Unit,
+    onOpenParent: (String) -> Unit,
+    onOpenUser: (String) -> Unit
+) {
+    val expandedFiles = remember(sha) { mutableStateMapOf<String, Boolean>() }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            FilledTonalButton(onClick = onBack) {
+                Icon(Lucide.ArrowLeft, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Commits")
+            }
+            Text(
+                text = sha.take(7),
+                style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.primary
+            )
+            detail?.let { d ->
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "+${d.additions} / -${d.deletions} (${d.changedFilesCount} files)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        when {
+            isLoading && detail == null -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    OctoLoadingState(message = "Loading commit ${sha.take(7)}...")
+                }
+            }
+            detail == null -> {
+                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text("Commit details unavailable.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item(key = "commit_header") {
+                        ElevatedCard(
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(detail.summary.headline, style = MaterialTheme.typography.titleMedium)
+                                if (detail.summary.body.isNotBlank()) {
+                                    Text(
+                                        text = detail.summary.body,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    UserAvatar(
+                                        detail.summary.authorAvatarUrl,
+                                        detail.summary.authorLogin ?: detail.summary.authorName,
+                                        sizeDp = 24,
+                                        modifier = Modifier.clickable(enabled = !detail.summary.authorLogin.isNullOrBlank()) {
+                                            detail.summary.authorLogin?.let(onOpenUser)
+                                        }
+                                    )
+                                    Text(
+                                        detail.summary.authorLogin?.let { "@$it" } ?: detail.summary.authorName,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    if (detail.summary.isVerified) {
+                                        ExpressiveStatusPill(
+                                            label = "Verified",
+                                            containerColor = Color(0xFF16A34A).copy(alpha = 0.16f),
+                                            contentColor = Color(0xFF16A34A),
+                                            icon = Lucide.ShieldCheck
+                                        )
+                                    }
+                                    Spacer(Modifier.weight(1f))
+                                    if (detail.summary.committedAt.length >= 10) {
+                                        Text(
+                                            detail.summary.committedAt.take(10),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                if (detail.summary.parentShas.isNotEmpty()) {
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        detail.summary.parentShas.forEach { parent ->
+                                            AssistChip(
+                                                onClick = { onOpenParent(parent) },
+                                                leadingIcon = { Icon(Lucide.GitCommitHorizontal, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                                                label = { Text("Parent ${parent.take(7)}", fontFamily = FontFamily.Monospace) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    detail.files.forEach { file ->
+                        val isExpanded = expandedFiles[file.filename] ?: (detail.files.size <= 3)
+                        diffFileLazyItems(
+                            file = file,
+                            expanded = isExpanded,
+                            onToggleExpand = { expandedFiles[file.filename] = !isExpanded }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RepoBranchCompareView(
+    availableRefs: List<String>,
+    baseRef: String,
+    headRef: String,
+    result: BranchCompareResult?,
+    isLoading: Boolean,
+    errorMsg: String?,
+    onSelectBase: (String) -> Unit,
+    onSelectHead: (String) -> Unit,
+    onSwapRefs: () -> Unit,
+    onRefresh: () -> Unit,
+    onBackToCommits: () -> Unit,
+    onOpenCommit: (String) -> Unit,
+    onOpenUser: (String) -> Unit
+) {
+    val expandedFiles = remember(baseRef, headRef) { mutableStateMapOf<String, Boolean>() }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilledTonalButton(onClick = onBackToCommits) {
+                    Icon(Lucide.ArrowLeft, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Commits")
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onRefresh) {
+                    Icon(Lucide.RefreshCw, contentDescription = "Refresh Compare", modifier = Modifier.size(18.dp))
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                RefSelectorDropdown(
+                    label = "Base",
+                    selectedRef = baseRef,
+                    options = availableRefs,
+                    onSelect = onSelectBase,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onSwapRefs) {
+                    Icon(Lucide.ArrowLeftRight, contentDescription = "Swap base and head", modifier = Modifier.size(16.dp))
+                }
+                RefSelectorDropdown(
+                    label = "Head",
+                    selectedRef = headRef,
+                    options = availableRefs,
+                    onSelect = onSelectHead,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        when {
+            isLoading -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    OctoLoadingState(message = "Comparing $baseRef...$headRef...")
+                }
+            }
+            errorMsg != null -> {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(errorMsg, color = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(10.dp))
+                    FilledTonalButton(onClick = onRefresh) { Text("Retry") }
+                }
+            }
+            result == null -> {
+                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text("Select two refs to compare.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item(key = "compare_summary") {
+                        ElevatedCard(
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    ExpressiveStatusPill(
+                                        label = result.status.uppercase(),
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        icon = Lucide.ArrowLeftRight
+                                    )
+                                    Text(
+                                        text = "Ahead ${result.aheadBy} · Behind ${result.behindBy}",
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                }
+                                Text(
+                                    text = "${result.totalCommits} commits · ${result.files.size} changed files",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    if (result.commits.isNotEmpty()) {
+                        item(key = "compare_commits_title") {
+                            Text("Commits (${result.commits.size})", style = MaterialTheme.typography.titleSmall)
+                        }
+                        items(items = result.commits, key = { "cmp_${it.sha}" }, contentType = { "commit_summary" }) { commit ->
+                            CommitSummaryCard(
+                                commit = commit,
+                                onClick = { onOpenCommit(commit.sha) },
+                                onOpenUser = onOpenUser
+                            )
+                        }
+                    }
+
+                    if (result.files.isNotEmpty()) {
+                        item(key = "compare_files_title") {
+                            Text("Changed Files (${result.files.size})", style = MaterialTheme.typography.titleSmall)
+                        }
+                        result.files.forEach { file ->
+                            val isExpanded = expandedFiles[file.filename] ?: (result.files.size <= 3)
+                            diffFileLazyItems(
+                                file = file,
+                                expanded = isExpanded,
+                                onToggleExpand = { expandedFiles[file.filename] = !isExpanded }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RefSelectorDropdown(
+    label: String,
+    selectedRef: String,
+    options: List<String>,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("$label: $selectedRef", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Icon(Lucide.ChevronDown, contentDescription = null, modifier = Modifier.size(14.dp))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { refName ->
+                DropdownMenuItem(
+                    text = { Text(refName) },
+                    onClick = {
+                        expanded = false
+                        onSelect(refName)
+                    }
+                )
             }
         }
     }

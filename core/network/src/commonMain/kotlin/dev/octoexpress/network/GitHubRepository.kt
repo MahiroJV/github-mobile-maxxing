@@ -2,8 +2,11 @@ package dev.octoexpress.network
 
 import dev.octoexpress.auth.SessionManager
 import dev.octoexpress.model.ActivityEvent
+import dev.octoexpress.model.BranchCompareResult
 import dev.octoexpress.model.BranchRef
 import dev.octoexpress.model.CodeSearchHit
+import dev.octoexpress.model.CommitDetail
+import dev.octoexpress.model.CommitSummary
 import dev.octoexpress.model.ContributionCalendar
 import dev.octoexpress.model.FileContent
 import dev.octoexpress.model.IssueFilterPreset
@@ -21,6 +24,7 @@ import dev.octoexpress.model.RateLimitInfo
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
+import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
@@ -108,6 +112,8 @@ private data class RepoKey(val owner: String, val repo: String)
 private data class IssuePullKey(val owner: String, val repo: String, val number: Int)
 private data class RepoIssuesKey(val owner: String, val repo: String, val pullRequests: Boolean, val stateFilter: IssueStateFilter)
 private data class RepoPathKey(val owner: String, val repo: String, val path: String, val ref: String?)
+private data class RepoCommitKey(val owner: String, val repo: String, val sha: String)
+private data class RepoCompareKey(val owner: String, val repo: String, val base: String, val head: String)
 
 class GitHubRepository(
     private val sessionManager: SessionManager,
@@ -147,6 +153,10 @@ class GitHubRepository(
     private val repoLabelsCache = LruMemoryCache<RepoKey, List<LabelTag>>(ttl = 180.seconds, maxEntries = 32)
     private val repoMilestonesCache = LruMemoryCache<RepoKey, List<MilestoneSummary>>(ttl = 180.seconds, maxEntries = 32)
     private val repoAssigneesCache = LruMemoryCache<RepoKey, List<UserSummary>>(ttl = 180.seconds, maxEntries = 32)
+    private val commitsCache = LruMemoryCache<RepoPathKey, List<CommitSummary>>(ttl = 60.seconds, maxEntries = 48)
+    private val commitDetailCache = LruMemoryCache<RepoCommitKey, CommitDetail>(ttl = 180.seconds, maxEntries = 48)
+    private val tagsCache = LruMemoryCache<RepoKey, List<TagRef>>(ttl = 180.seconds, maxEntries = 32)
+    private val compareCache = LruMemoryCache<RepoCompareKey, BranchCompareResult>(ttl = 60.seconds, maxEntries = 32)
 
     suspend fun clearCache() {
         profileCache.clear()
@@ -178,6 +188,10 @@ class GitHubRepository(
         repoLabelsCache.clear()
         repoMilestonesCache.clear()
         repoAssigneesCache.clear()
+        commitsCache.clear()
+        commitDetailCache.clear()
+        tagsCache.clear()
+        compareCache.clear()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -899,5 +913,80 @@ class GitHubRepository(
         issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
         myIssuesCache.clear()
         repoIssuesCache.invalidateWhere { it.owner == owner && it.repo == repo }
+    }
+
+    fun peekRepoCommits(owner: String, repo: String, ref: String? = null, path: String = ""): List<CommitSummary>? =
+        commitsCache.peek(RepoPathKey(owner, repo, path, ref))
+
+    fun peekCommitDetail(owner: String, repo: String, sha: String): CommitDetail? =
+        commitDetailCache.peek(RepoCommitKey(owner, repo, sha))
+
+    suspend fun getRepoCommits(
+        owner: String,
+        repo: String,
+        ref: String? = null,
+        path: String = "",
+        forceRefresh: Boolean = false
+    ): Result<List<CommitSummary>> {
+        val key = RepoPathKey(owner, repo, path, ref)
+        if (!forceRefresh) {
+            commitsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchRepoCommits(owner, repo, ref, path.takeIf(String::isNotBlank))
+        }.onSuccess {
+            commitsCache.put(key, it)
+        }
+    }
+
+    suspend fun getCommitDetail(
+        owner: String,
+        repo: String,
+        sha: String,
+        forceRefresh: Boolean = false
+    ): Result<CommitDetail> {
+        val key = RepoCommitKey(owner, repo, sha)
+        if (!forceRefresh) {
+            commitDetailCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchCommitDetail(owner, repo, sha)
+        }.onSuccess {
+            commitDetailCache.put(key, it)
+        }
+    }
+
+    suspend fun getRepoTags(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<List<TagRef>> {
+        val key = RepoKey(owner, repo)
+        if (!forceRefresh) {
+            tagsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchRepoTags(owner, repo)
+        }.onSuccess {
+            tagsCache.put(key, it)
+        }
+    }
+
+    suspend fun compareRefs(
+        owner: String,
+        repo: String,
+        base: String,
+        head: String,
+        forceRefresh: Boolean = false
+    ): Result<BranchCompareResult> {
+        val key = RepoCompareKey(owner, repo, base, head)
+        if (!forceRefresh) {
+            compareCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.compareRefs(owner, repo, base, head)
+        }.onSuccess {
+            compareCache.put(key, it)
+        }
     }
 }
