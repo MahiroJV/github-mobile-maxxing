@@ -1456,6 +1456,8 @@ fun RepoDetailScreen(
         }
     }
 
+    val issueStateRevision by container.repository.issueStateRevision.collectAsState()
+
     fun loadRepoIssues(filter: IssueStateFilter, forceRefresh: Boolean = false) {
         scope.launch {
             val cached = container.repository.peekRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = false, stateFilter = filter)
@@ -1463,6 +1465,7 @@ fun RepoDetailScreen(
                 repoIssues = cached
                 issuesLoading = false
             } else {
+                repoIssues = null
                 issuesLoading = true
             }
             issuesError = null
@@ -1488,6 +1491,7 @@ fun RepoDetailScreen(
                 repoPulls = cached
                 pullsLoading = false
             } else {
+                repoPulls = null
                 pullsLoading = true
             }
             pullsError = null
@@ -1617,6 +1621,23 @@ fun RepoDetailScreen(
     LaunchedEffect(activeTab, pullStateFilter, repo.fullName) {
         if (activeTab == RepoDetailTab.PULLS) {
             loadRepoPulls(pullStateFilter, forceRefresh = false)
+        }
+    }
+
+    LaunchedEffect(issueStateRevision, repo.fullName, issueStateFilter, pullStateFilter) {
+        if (issueStateRevision > 0L) {
+            container.repository.peekRepoIssuesOrPulls(
+                repo.owner,
+                repo.name,
+                pullRequests = false,
+                stateFilter = issueStateFilter
+            )?.let { repoIssues = it }
+            container.repository.peekRepoIssuesOrPulls(
+                repo.owner,
+                repo.name,
+                pullRequests = true,
+                stateFilter = pullStateFilter
+            )?.let { repoPulls = it }
         }
     }
 

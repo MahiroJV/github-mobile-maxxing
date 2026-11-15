@@ -20,6 +20,7 @@ import dev.octoexpress.model.GistSummary
 import dev.octoexpress.model.IssueFilterPreset
 import dev.octoexpress.model.IssueOrPullDetail
 import dev.octoexpress.model.IssueOrPullKind
+import dev.octoexpress.model.IssueOrPullState
 import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.LabelTag
@@ -46,7 +47,9 @@ import dev.octoexpress.model.WorkflowSummary
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
@@ -70,6 +73,19 @@ private class LruMemoryCache<K, V>(
     private var snapshot: Map<K, CacheEntry<V>> = emptyMap()
 
     fun peek(key: K): V? = snapshot[key]?.value
+
+    fun entriesSnapshot(): Map<K, V> = snapshot.mapValues { it.value.value }
+
+    suspend fun updateEntries(transform: (K, V) -> V) {
+        mutex.withLock {
+            if (snapshot.isEmpty()) return
+            val next = LinkedHashMap<K, CacheEntry<V>>(snapshot.size)
+            for ((k, entry) in snapshot) {
+                next[k] = CacheEntry(transform(k, entry.value), entry.recordedAt)
+            }
+            snapshot = next
+        }
+    }
 
     fun peekIfFresh(key: K): V? {
         val entry = snapshot[key] ?: return null
@@ -140,6 +156,14 @@ class GitHubRepository(
     private val graphQlService: GitHubGraphQlService = GitHubGraphQlService(httpClient, networkConfig.baseUrl)
 ) {
     val rateLimit: StateFlow<RateLimitInfo> = networkConfig.rateLimit
+
+    private val issueOverridesMutex = Mutex()
+    @Volatile
+    private var recentIssueStateOverrides: Map<NormalizedIssueKey, RecentIssueStateEntry> = emptyMap()
+    @Volatile
+    private var presetIssueHints: Map<Pair<IssueFilterPreset, String>, Map<NormalizedIssueKey, IssueOrPullSummary>> = emptyMap()
+    private val _issueStateRevision = MutableStateFlow(0L)
+    val issueStateRevision: StateFlow<Long> = _issueStateRevision.asStateFlow()
 
     private val profileCache = LruMemoryCache<String, ViewerProfile>(ttl = 300.seconds, maxEntries = 2)
     private val notificationsCache = LruMemoryCache<NotificationsKey, List<NotificationThread>>(ttl = 30.seconds, maxEntries = 12)
@@ -229,6 +253,8 @@ class GitHubRepository(
         securityOverviewCache.clear()
         gistsCache.clear()
         gistDetailCache.clear()
+        recentIssueStateOverrides = emptyMap()
+        presetIssueHints = emptyMap()
     }
 
     // ---- Synchronous lock-free cache peeks for instant UI rendering ----
@@ -332,6 +358,138 @@ class GitHubRepository(
         notificationsCache.clear()
     }
 
+    private fun activeIssueOverrides(): Map<Pair<String, Int>, IssueOrPullState> {
+        val result = LinkedHashMap<Pair<String, Int>, IssueOrPullState>()
+        for ((key, entry) in recentIssueStateOverrides) {
+            if (entry.isActive()) {
+                result["${key.ownerLower}/${key.repoLower}" to key.number] = entry.targetState
+            }
+        }
+        return result
+    }
+
+    private fun reconcileMyIssues(
+        preset: IssueFilterPreset,
+        viewerLogin: String,
+        stateFilter: IssueStateFilter,
+        items: List<IssueOrPullSummary>
+    ): List<IssueOrPullSummary> {
+        val overrides = activeIssueOverrides()
+        val hints = presetIssueHints[preset to viewerLogin]?.values?.toList().orEmpty()
+        return reconcileIssueListWithStateOverrides(
+            items = items,
+            stateFilter = stateFilter,
+            overrides = overrides,
+            hintCandidates = hints
+        )
+    }
+
+    private fun reconcileRepoIssues(
+        owner: String,
+        repo: String,
+        pullRequests: Boolean,
+        stateFilter: IssueStateFilter,
+        items: List<IssueOrPullSummary>
+    ): List<IssueOrPullSummary> {
+        val overrides = activeIssueOverrides()
+        val targetKind = if (pullRequests) IssueOrPullKind.PULL_REQUEST else IssueOrPullKind.ISSUE
+        val hints = recentIssueStateOverrides.values.mapNotNull { entry ->
+            entry.summaryHint?.takeIf {
+                entry.isActive() &&
+                    it.repoOwner.equals(owner, ignoreCase = true) &&
+                    it.repoName.equals(repo, ignoreCase = true) &&
+                    it.kind == targetKind
+            }
+        }
+        return reconcileIssueListWithStateOverrides(
+            items = items,
+            stateFilter = stateFilter,
+            overrides = overrides,
+            hintCandidates = hints
+        )
+    }
+
+    private suspend fun recordIssueStateTransition(
+        owner: String,
+        repo: String,
+        number: Int,
+        newState: IssueOrPullState
+    ) {
+        val normalizedKey = NormalizedIssueKey.of(owner, repo, number)
+        val mySnapshot = myIssuesCache.entriesSnapshot()
+        val repoSnapshot = repoIssuesCache.entriesSnapshot()
+
+        val affectedBuckets = LinkedHashMap<Pair<IssueFilterPreset, String>, IssueOrPullSummary>()
+        var bestSummary: IssueOrPullSummary? = null
+
+        for ((cacheKey, list) in mySnapshot) {
+            val found = list.firstOrNull { NormalizedIssueKey.of(it) == normalizedKey }
+            if (found != null) {
+                affectedBuckets[cacheKey.preset to cacheKey.viewerLogin] = found
+                if (bestSummary == null) bestSummary = found
+            }
+        }
+        if (bestSummary == null) {
+            for ((cacheKey, list) in repoSnapshot) {
+                if (cacheKey.owner.equals(owner, ignoreCase = true) && cacheKey.repo.equals(repo, ignoreCase = true)) {
+                    val found = list.firstOrNull { NormalizedIssueKey.of(it) == normalizedKey }
+                    if (found != null) {
+                        bestSummary = found
+                        break
+                    }
+                }
+            }
+        }
+        if (bestSummary == null) {
+            bestSummary = issueDetailCache.peek(IssuePullKey(owner, repo, number))?.toSummary()
+        }
+
+        issueOverridesMutex.withLock {
+            val nextOverrides = LinkedHashMap<NormalizedIssueKey, RecentIssueStateEntry>()
+            for ((k, v) in recentIssueStateOverrides) {
+                if (v.isActive() && k != normalizedKey) nextOverrides[k] = v
+            }
+            nextOverrides[normalizedKey] = RecentIssueStateEntry(targetState = newState, summaryHint = bestSummary)
+            recentIssueStateOverrides = nextOverrides
+
+            if (affectedBuckets.isNotEmpty() || presetIssueHints.isNotEmpty()) {
+                val nextHints = LinkedHashMap<Pair<IssueFilterPreset, String>, Map<NormalizedIssueKey, IssueOrPullSummary>>(presetIssueHints)
+                for ((bucket, summary) in affectedBuckets) {
+                    val existing = LinkedHashMap(nextHints[bucket].orEmpty())
+                    existing[normalizedKey] = summary.copy(state = newState)
+                    nextHints[bucket] = existing
+                }
+                for ((bucket, existingMap) in presetIssueHints) {
+                    if (normalizedKey in existingMap && bucket !in affectedBuckets) {
+                        val updated = LinkedHashMap(existingMap)
+                        updated[normalizedKey] = updated.getValue(normalizedKey).copy(state = newState)
+                        nextHints[bucket] = updated
+                    }
+                }
+                presetIssueHints = nextHints
+            }
+        }
+
+        myIssuesCache.updateEntries { k, list ->
+            val bucket = k.preset to k.viewerLogin
+            val hint = affectedBuckets[bucket] ?: presetIssueHints[bucket]?.get(normalizedKey)
+            if (hint != null || list.any { NormalizedIssueKey.of(it) == normalizedKey }) {
+                patchIssueListForSingleMutation(list, k.stateFilter, normalizedKey, newState, hint ?: bestSummary)
+            } else {
+                list
+            }
+        }
+        repoIssuesCache.updateEntries { k, list ->
+            if (k.owner.equals(owner, ignoreCase = true) && k.repo.equals(repo, ignoreCase = true)) {
+                val kindFilteredHint = bestSummary?.takeIf { (it.kind == IssueOrPullKind.PULL_REQUEST) == k.pullRequests }
+                patchIssueListForSingleMutation(list, k.stateFilter, normalizedKey, newState, kindFilteredHint)
+            } else {
+                list
+            }
+        }
+        _issueStateRevision.value += 1L
+    }
+
     suspend fun getMyIssuesAndPulls(
         preset: IssueFilterPreset,
         viewerLogin: String,
@@ -343,7 +501,8 @@ class GitHubRepository(
             myIssuesCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
         return runCatching {
-            graphQlService.fetchIssuesAndPulls(preset, viewerLogin, stateFilter)
+            val fetched = graphQlService.fetchIssuesAndPulls(preset, viewerLogin, stateFilter)
+            reconcileMyIssues(preset, viewerLogin, stateFilter, fetched)
         }.onSuccess {
             myIssuesCache.put(key, it)
         }
@@ -409,9 +568,9 @@ class GitHubRepository(
     ): Result<Unit> = runCatching {
         restService.setIssueOrPullState(owner, repo, number, open)
     }.onSuccess {
+        val nextState = if (open) IssueOrPullState.OPEN else IssueOrPullState.CLOSED
+        recordIssueStateTransition(owner, repo, number, nextState)
         issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
-        myIssuesCache.clear()
-        repoIssuesCache.invalidateWhere { it.owner == owner && it.repo == repo }
     }
 
     suspend fun createIssue(
@@ -448,9 +607,8 @@ class GitHubRepository(
     ): Result<Unit> = runCatching {
         restService.mergePullRequest(owner, repo, number, method, commitTitle)
     }.onSuccess {
+        recordIssueStateTransition(owner, repo, number, IssueOrPullState.MERGED)
         issueDetailCache.invalidate(IssuePullKey(owner, repo, number))
-        myIssuesCache.clear()
-        repoIssuesCache.invalidateWhere { it.owner == owner && it.repo == repo && it.pullRequests }
     }
 
     suspend fun getViewerRepositories(forceRefresh: Boolean = false): Result<List<RepoSummary>> {
@@ -532,7 +690,8 @@ class GitHubRepository(
             repoIssuesCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
         return runCatching {
-            graphQlService.fetchRepoIssuesAndPulls(owner, repo, pullRequests, stateFilter)
+            val fetched = graphQlService.fetchRepoIssuesAndPulls(owner, repo, pullRequests, stateFilter)
+            reconcileRepoIssues(owner, repo, pullRequests, stateFilter, fetched)
         }.onSuccess {
             repoIssuesCache.put(key, it)
         }

@@ -89,6 +89,7 @@ fun IssuesPullsScreen(
     val scope = rememberCoroutineScope()
     val profile by container.viewerProfile.collectAsState()
     val session by container.sessionManager.session.collectAsState()
+    val issueStateRevision by container.repository.issueStateRevision.collectAsState()
     val login = profile?.login ?: session?.userLogin ?: ""
 
     var preset by remember { mutableStateOf(IssueFilterPreset.CREATED) }
@@ -162,6 +163,14 @@ fun IssuesPullsScreen(
 
     LaunchedEffect(preset, stateFilter, login) {
         loadItems(forceRefresh = false)
+    }
+
+    LaunchedEffect(issueStateRevision) {
+        if (login.isNotBlank() && issueStateRevision > 0L) {
+            container.repository.peekMyIssuesAndPulls(preset, login, stateFilter)?.let { updated ->
+                items = updated
+            }
+        }
     }
 
     ListDetailPaneScaffold(
