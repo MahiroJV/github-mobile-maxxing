@@ -78,6 +78,7 @@ internal fun RepoDiscussionsTabContent(
     onSelectCategory: (String?) -> Unit,
     isLoading: Boolean,
     errorMsg: String?,
+    canParticipate: Boolean = true,
     onRefresh: () -> Unit,
     onOpenCreateDiscussion: () -> Unit,
     onOpenDiscussion: (DiscussionSummary) -> Unit,
@@ -99,7 +100,7 @@ internal fun RepoDiscussionsTabContent(
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f)
             )
-            if (categories.isNotEmpty() && !data?.repositoryId.isNullOrBlank()) {
+            if (canParticipate && categories.isNotEmpty() && !data?.repositoryId.isNullOrBlank()) {
                 OutlinedButton(
                     onClick = onOpenCreateDiscussion,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
@@ -308,6 +309,7 @@ internal fun DiscussionDetailView(
     isLoading: Boolean,
     commentBusy: Boolean,
     errorMsg: String?,
+    canParticipate: Boolean = true,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onToggleUpvote: (DiscussionSummary) -> Unit,
@@ -442,8 +444,10 @@ internal fun DiscussionDetailView(
                                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
                                     }
-                                    TextButton(onClick = { replyTarget = comment }) {
-                                        Text("Reply")
+                                    if (canParticipate) {
+                                        TextButton(onClick = { replyTarget = comment }) {
+                                            Text("Reply")
+                                        }
                                     }
                                 }
                                 GitHubMarkdown(content = comment.body, modifier = Modifier.fillMaxWidth())
@@ -476,46 +480,48 @@ internal fun DiscussionDetailView(
                     }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (replyTarget != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Replying to @${replyTarget!!.authorLogin}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { replyTarget = null }, modifier = Modifier.size(24.dp)) {
-                                Icon(Lucide.X, contentDescription = "Cancel reply", modifier = Modifier.size(14.dp))
+                if (canParticipate) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (replyTarget != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Replying to @${replyTarget!!.authorLogin}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { replyTarget = null }, modifier = Modifier.size(24.dp)) {
+                                    Icon(Lucide.X, contentDescription = "Cancel reply", modifier = Modifier.size(14.dp))
+                                }
                             }
                         }
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = commentText,
-                            onValueChange = { commentText = it },
-                            placeholder = { Text(if (replyTarget != null) "Write a reply..." else "Add a comment...") },
-                            modifier = Modifier.weight(1f),
-                            maxLines = 4
-                        )
-                        FilledTonalButton(
-                            enabled = commentText.trim().isNotBlank() && !commentBusy,
-                            onClick = {
-                                val textToSend = commentText.trim()
-                                val targetId = replyTarget?.id
-                                commentText = ""
-                                replyTarget = null
-                                onSubmitComment(textToSend, targetId)
-                            }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(Lucide.Send, contentDescription = "Send comment", modifier = Modifier.size(16.dp))
+                            OutlinedTextField(
+                                value = commentText,
+                                onValueChange = { commentText = it },
+                                placeholder = { Text(if (replyTarget != null) "Write a reply..." else "Add a comment...") },
+                                modifier = Modifier.weight(1f),
+                                maxLines = 4
+                            )
+                            FilledTonalButton(
+                                enabled = commentText.trim().isNotBlank() && !commentBusy,
+                                onClick = {
+                                    val textToSend = commentText.trim()
+                                    val targetId = replyTarget?.id
+                                    commentText = ""
+                                    replyTarget = null
+                                    onSubmitComment(textToSend, targetId)
+                                }
+                            ) {
+                                Icon(Lucide.Send, contentDescription = "Send comment", modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }

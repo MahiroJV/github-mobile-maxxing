@@ -164,6 +164,24 @@ private data class RestRepoOwnerDto(
 )
 
 @Serializable
+private data class RestRepoPermissionsDto(
+    val admin: Boolean = false,
+    val maintain: Boolean = false,
+    val push: Boolean = false,
+    val triage: Boolean = false,
+    val pull: Boolean = false
+) {
+    fun highestRole(): String? = when {
+        admin -> "ADMIN"
+        maintain -> "MAINTAIN"
+        push -> "WRITE"
+        triage -> "TRIAGE"
+        pull -> "READ"
+        else -> null
+    }
+}
+
+@Serializable
 private data class RestRepoDto(
     @SerialName("node_id") val nodeId: String = "",
     val id: Long = 0L,
@@ -176,6 +194,9 @@ private data class RestRepoDto(
     @SerialName("open_issues_count") val openIssuesCount: Int = 0,
     val private: Boolean = false,
     val fork: Boolean = false,
+    val archived: Boolean = false,
+    @SerialName("has_issues") val hasIssues: Boolean = true,
+    val permissions: RestRepoPermissionsDto? = null,
     @SerialName("default_branch") val defaultBranch: String = "main",
     @SerialName("updated_at") val updatedAt: String = "",
     val owner: RestRepoOwnerDto? = null
@@ -196,7 +217,11 @@ private data class RestRepoDto(
         defaultBranch = defaultBranch.ifBlank { "main" },
         updatedAt = updatedAt,
         ownerAvatarUrl = owner?.avatarUrl.orEmpty(),
-        viewerHasStarred = viewerHasStarred
+        viewerHasStarred = viewerHasStarred,
+        viewerPermission = permissions?.highestRole(),
+        hasKnownPermission = permissions != null,
+        isArchived = archived,
+        hasIssuesEnabled = hasIssues
     )
 }
 

@@ -19,8 +19,58 @@ data class RepoSummary(
     val defaultBranch: String = "main",
     val updatedAt: String = "",
     val ownerAvatarUrl: String = "",
-    val viewerHasStarred: Boolean = false
+    val viewerHasStarred: Boolean = false,
+    val viewerPermission: String? = null,
+    val hasKnownPermission: Boolean = false,
+    val isArchived: Boolean = false,
+    val hasIssuesEnabled: Boolean = true
 )
+
+data class RepoCapabilities(
+    val viewerPermission: String?,
+    val permissionResolved: Boolean,
+    val isArchived: Boolean,
+    val canPush: Boolean,
+    val canTriage: Boolean,
+    val canCreateIssue: Boolean,
+    val canCommentOrCreateDiscussion: Boolean
+)
+
+private val REPO_WRITE_PERMS = setOf("ADMIN", "MAINTAIN", "WRITE")
+private val REPO_TRIAGE_PERMS = setOf("ADMIN", "MAINTAIN", "WRITE", "TRIAGE")
+
+fun resolveRepoCapabilities(
+    summary: RepoSummary,
+    detail: RepoDetail? = null,
+    viewerLogin: String? = null
+): RepoCapabilities {
+    val effective = detail?.summary ?: summary
+    val perm = (detail?.summary?.viewerPermission ?: summary.viewerPermission)?.uppercase()
+    val resolved = (detail?.summary?.hasKnownPermission == true) || summary.hasKnownPermission || perm != null
+    val archived = detail?.summary?.isArchived ?: summary.isArchived
+    val issuesEnabled = detail?.summary?.hasIssuesEnabled ?: summary.hasIssuesEnabled
+
+    val hasWrite = if (resolved) {
+        perm in REPO_WRITE_PERMS
+    } else {
+        !viewerLogin.isNullOrBlank() && viewerLogin.equals(effective.owner, ignoreCase = true)
+    }
+    val hasTriage = if (resolved) {
+        perm in REPO_TRIAGE_PERMS
+    } else {
+        hasWrite
+    }
+
+    return RepoCapabilities(
+        viewerPermission = perm,
+        permissionResolved = resolved,
+        isArchived = archived,
+        canPush = !archived && hasWrite,
+        canTriage = !archived && hasTriage,
+        canCreateIssue = !archived && issuesEnabled,
+        canCommentOrCreateDiscussion = !archived
+    )
+}
 
 @Serializable
 data class RepoDetail(

@@ -757,6 +757,8 @@ class GitHubGraphQlService(
         val ownerObj = obj.obj("owner")
         val langObj = obj.obj("primaryLanguage")
         val defaultBranch = obj.obj("defaultBranchRef")?.str("name") ?: "main"
+        val hasPermField = "viewerPermission" in obj
+        val viewerPermission = obj.str("viewerPermission")?.uppercase()
         return RepoSummary(
             id = obj.str("id") ?: "",
             name = obj.str("name") ?: "",
@@ -773,7 +775,11 @@ class GitHubGraphQlService(
             defaultBranch = defaultBranch,
             updatedAt = obj.str("updatedAt") ?: "",
             ownerAvatarUrl = ownerObj?.str("avatarUrl") ?: "",
-            viewerHasStarred = obj.bool("viewerHasStarred") ?: false
+            viewerHasStarred = obj.bool("viewerHasStarred") ?: false,
+            viewerPermission = viewerPermission,
+            hasKnownPermission = hasPermField,
+            isArchived = obj.bool("isArchived") ?: false,
+            hasIssuesEnabled = obj.bool("hasIssuesEnabled") ?: true
         )
     }
 
@@ -1111,6 +1117,9 @@ class GitHubGraphQlService(
             description
             isPrivate
             isFork
+            isArchived
+            hasIssuesEnabled
+            viewerPermission
             stargazerCount
             forkCount
             updatedAt

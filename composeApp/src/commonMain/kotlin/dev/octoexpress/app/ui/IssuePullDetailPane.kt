@@ -1538,27 +1538,32 @@ private fun DetailHeaderCard(
                 }
             }
 
-            if (item.viewerCanEditMetadata) {
+            val canAccessPrMeta = item.kind == IssueOrPullKind.PULL_REQUEST &&
+                item.state == IssueOrPullState.OPEN &&
+                (item.viewerCanEditMetadata || item.viewerCanUpdate)
+            if (item.viewerCanEditMetadata || canAccessPrMeta) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    AssistChip(
-                        onClick = onEditLabels,
-                        leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                        label = { Text("Labels (${item.labels.size})") }
-                    )
-                    AssistChip(
-                        onClick = onEditAssignees,
-                        leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                        label = { Text("Assignees (${item.assignees.size})") }
-                    )
-                    AssistChip(
-                        onClick = onEditMilestone,
-                        leadingIcon = { Icon(Lucide.Flag, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                        label = { Text(item.milestone?.title ?: "Milestone") }
-                    )
-                    if (item.kind == IssueOrPullKind.PULL_REQUEST && item.state == IssueOrPullState.OPEN) {
+                    if (item.viewerCanEditMetadata) {
+                        AssistChip(
+                            onClick = onEditLabels,
+                            leadingIcon = { Icon(Lucide.Tag, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                            label = { Text("Labels (${item.labels.size})") }
+                        )
+                        AssistChip(
+                            onClick = onEditAssignees,
+                            leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                            label = { Text("Assignees (${item.assignees.size})") }
+                        )
+                        AssistChip(
+                            onClick = onEditMilestone,
+                            leadingIcon = { Icon(Lucide.Flag, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                            label = { Text(item.milestone?.title ?: "Milestone") }
+                        )
+                    }
+                    if (canAccessPrMeta) {
                         AssistChip(
                             onClick = onRequestReviewers,
                             leadingIcon = { Icon(Lucide.Users, contentDescription = null, modifier = Modifier.size(14.dp)) },

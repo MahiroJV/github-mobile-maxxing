@@ -141,6 +141,7 @@ import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
 import dev.octoexpress.model.RepoSecurityOverview
 import dev.octoexpress.model.RepoSummary
+import dev.octoexpress.model.resolveRepoCapabilities
 import dev.octoexpress.model.TagRef
 import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
@@ -1457,6 +1458,11 @@ fun RepoDetailScreen(
     }
 
     val issueStateRevision by container.repository.issueStateRevision.collectAsState()
+    val viewerSession by container.sessionManager.session.collectAsState()
+    val effectiveViewerLogin = viewerProfile?.login ?: viewerSession?.userLogin
+    val capabilities = remember(repo, detail, effectiveViewerLogin) {
+        resolveRepoCapabilities(repo, detail, effectiveViewerLogin)
+    }
 
     fun loadRepoIssues(filter: IssueStateFilter, forceRefresh: Boolean = false) {
         scope.launch {
@@ -1678,13 +1684,15 @@ fun RepoDetailScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     }
-                    FilledTonalButton(
-                        onClick = { showCreateIssueDialog = true },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Issue", maxLines = 1, softWrap = false)
+                    if (capabilities.canCreateIssue) {
+                        FilledTonalButton(
+                            onClick = { showCreateIssueDialog = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Issue", maxLines = 1, softWrap = false)
+                        }
                     }
                 }
 
@@ -2096,7 +2104,7 @@ fun RepoDetailScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-                            if (!file.isBinary && file.sha.isNotBlank()) {
+                            if (!file.isBinary && file.sha.isNotBlank() && capabilities.canPush) {
                                 IconButton(
                                     onClick = {
                                         editingExistingFile = file
@@ -2107,7 +2115,7 @@ fun RepoDetailScreen(
                                     Icon(Lucide.Pencil, contentDescription = "Edit file", modifier = Modifier.size(18.dp))
                                 }
                             }
-                            if (file.sha.isNotBlank()) {
+                            if (file.sha.isNotBlank() && capabilities.canPush) {
                                 IconButton(
                                     onClick = {
                                         fileMutationError = null
@@ -2197,17 +2205,19 @@ fun RepoDetailScreen(
                                     Spacer(Modifier.width(4.dp))
                                     Text("Commits", maxLines = 1, softWrap = false)
                                 }
-                                FilledTonalButton(
-                                    onClick = {
-                                        editingExistingFile = null
-                                        fileMutationError = null
-                                        showFileEditorDialog = true
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("File", maxLines = 1, softWrap = false)
+                                if (capabilities.canPush) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            editingExistingFile = null
+                                            fileMutationError = null
+                                            showFileEditorDialog = true
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("File", maxLines = 1, softWrap = false)
+                                    }
                                 }
                             }
                         }
@@ -2310,6 +2320,7 @@ fun RepoDetailScreen(
                             jobs = runJobs,
                             isLoading = jobsLoading,
                             actionBusy = actionsBusy,
+                            canManageRuns = capabilities.canPush,
                             onBack = {
                                 openedRun = null
                                 runJobs = null
@@ -2351,6 +2362,7 @@ fun RepoDetailScreen(
                             runs = workflowRuns,
                             isLoading = actionsLoading,
                             errorMsg = actionsError,
+                            canDispatch = capabilities.canPush,
                             onSelectWorkflow = { wfId ->
                                 selectedWorkflowId = wfId
                                 loadActions(wfId, forceRefresh = false)
@@ -2369,6 +2381,7 @@ fun RepoDetailScreen(
                     tags = repoTags,
                     isLoading = releasesLoading,
                     errorMsg = releasesError,
+                    canCreateRelease = capabilities.canPush,
                     onRefresh = { loadReleases(forceRefresh = true) },
                     onOpenCreateRelease = {
                         createReleaseError = null
@@ -2395,6 +2408,7 @@ fun RepoDetailScreen(
                         isLoading = discussionDetailLoading,
                         commentBusy = discussionCommentBusy,
                         errorMsg = discussionDetailError,
+                        canParticipate = capabilities.canCommentOrCreateDiscussion,
                         onBack = {
                             openedDiscussionNumber = null
                             discussionDetail = null
@@ -2453,6 +2467,7 @@ fun RepoDetailScreen(
                         },
                         isLoading = discussionsLoading,
                         errorMsg = discussionsError,
+                        canParticipate = capabilities.canCommentOrCreateDiscussion,
                         onRefresh = { loadDiscussions(selectedDiscussionCategoryId, forceRefresh = true) },
                         onOpenCreateDiscussion = {
                             createDiscussionError = null
@@ -2500,6 +2515,9 @@ fun RepoDetailScreen(
                     isLoading = issuesLoading,
                     errorMsg = issuesError,
                     onRefresh = { loadRepoIssues(issueStateFilter, forceRefresh = true) },
+                    onCreateNew = if (capabilities.canCreateIssue) {
+                        { showCreateIssueDialog = true }
+                    } else null,
                     onOpenItem = { item ->
                         onOpenIssueOrPull(
                             IssuePullTarget(repo.owner, repo.name, item.number, item.title)
@@ -2517,10 +2535,12 @@ fun RepoDetailScreen(
                     isLoading = pullsLoading,
                     errorMsg = pullsError,
                     onRefresh = { loadRepoPulls(pullStateFilter, forceRefresh = true) },
-                    onCreateNew = {
-                        createPrError = null
-                        showCreatePrDialog = true
-                    },
+                    onCreateNew = if (capabilities.canPush) {
+                        {
+                            createPrError = null
+                            showCreatePrDialog = true
+                        }
+                    } else null,
                     onOpenItem = { item ->
                         onOpenIssueOrPull(
                             IssuePullTarget(repo.owner, repo.name, item.number, item.title)
@@ -3656,6 +3676,7 @@ private fun RepoActionsTabContent(
     runs: List<WorkflowRunSummary>?,
     isLoading: Boolean,
     errorMsg: String?,
+    canDispatch: Boolean,
     onSelectWorkflow: (Long?) -> Unit,
     onRefresh: () -> Unit,
     onOpenDispatch: () -> Unit,
@@ -3686,7 +3707,7 @@ private fun RepoActionsTabContent(
                     )
                 }
             }
-            if (workflows.isNotEmpty()) {
+            if (workflows.isNotEmpty() && canDispatch) {
                 FilledTonalButton(
                     onClick = onOpenDispatch,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
@@ -3818,6 +3839,7 @@ private fun WorkflowRunDetailView(
     jobs: List<WorkflowJobSummary>?,
     isLoading: Boolean,
     actionBusy: Boolean,
+    canManageRuns: Boolean,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onRerun: (failedOnly: Boolean) -> Unit,
@@ -3871,25 +3893,27 @@ private fun WorkflowRunDetailView(
                                 Icon(statusIcon, contentDescription = null, tint = statusTint, modifier = Modifier.size(20.dp))
                                 Text(run.displayTitle.ifBlank { run.name }, style = MaterialTheme.typography.titleMedium)
                             }
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.horizontalScroll(rememberScrollState())
-                            ) {
-                                if (run.status != "completed") {
-                                    FilledTonalButton(enabled = !actionBusy, onClick = onCancel) {
-                                        Icon(Lucide.X, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Cancel Run")
-                                    }
-                                } else {
-                                    FilledTonalButton(enabled = !actionBusy, onClick = { onRerun(false) }) {
-                                        Icon(Lucide.RefreshCw, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Re-run All")
-                                    }
-                                    if (run.conclusion == "failure") {
-                                        OutlinedButton(enabled = !actionBusy, onClick = { onRerun(true) }) {
-                                            Text("Re-run Failed")
+                            if (canManageRuns) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                                ) {
+                                    if (run.status != "completed") {
+                                        FilledTonalButton(enabled = !actionBusy, onClick = onCancel) {
+                                            Icon(Lucide.X, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Cancel Run")
+                                        }
+                                    } else {
+                                        FilledTonalButton(enabled = !actionBusy, onClick = { onRerun(false) }) {
+                                            Icon(Lucide.RefreshCw, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Re-run All")
+                                        }
+                                        if (run.conclusion == "failure") {
+                                            OutlinedButton(enabled = !actionBusy, onClick = { onRerun(true) }) {
+                                                Text("Re-run Failed")
+                                            }
                                         }
                                     }
                                 }

@@ -72,6 +72,7 @@ internal fun RepoReleasesTabContent(
     tags: List<TagRef>,
     isLoading: Boolean,
     errorMsg: String?,
+    canCreateRelease: Boolean = true,
     onRefresh: () -> Unit,
     onOpenCreateRelease: () -> Unit,
     onSelectTag: (TagRef) -> Unit
@@ -93,13 +94,15 @@ internal fun RepoReleasesTabContent(
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f)
             )
-            OutlinedButton(
-                onClick = onOpenCreateRelease,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("New release", maxLines = 1, softWrap = false)
+            if (canCreateRelease) {
+                OutlinedButton(
+                    onClick = onOpenCreateRelease,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New release", maxLines = 1, softWrap = false)
+                }
             }
             IconButton(onClick = onRefresh) {
                 Icon(Lucide.RefreshCw, contentDescription = "Refresh releases")
