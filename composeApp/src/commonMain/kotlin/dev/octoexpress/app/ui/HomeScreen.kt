@@ -323,31 +323,6 @@ private fun HomeDashboardPane(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item(key = "quick_shortcuts", contentType = "shortcuts") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            AssistChip(
-                                onClick = onNavigateInbox,
-                                leadingIcon = { Icon(Lucide.Inbox, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text(if (unreadCount > 0) "Inbox ($unreadCount)" else "Inbox") }
-                            )
-                            AssistChip(
-                                onClick = onNavigateIssuesPrs,
-                                leadingIcon = { Icon(Lucide.GitPullRequest, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text("Issues & PRs") }
-                            )
-                            AssistChip(
-                                onClick = onNavigateRepos,
-                                leadingIcon = { Icon(Lucide.FolderGit2, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text("Repositories (${profile?.publicReposCount ?: recentRepos.size})") }
-                            )
-                        }
-                    }
-
                     calendar?.let { cal ->
                         item(key = "contributions", contentType = "contribution_heatmap") {
                             ContributionHeatmapCard(calendar = cal)
