@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -337,7 +338,10 @@ private fun HomeDashboardPane(
                                     text = "Recent Repositories",
                                     style = MaterialTheme.typography.titleMedium
                                 )
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.fillMaxWidth().height(124.dp)
+                                ) {
                                     items(
                                         items = recentRepos.take(10),
                                         key = { it.id },
@@ -350,23 +354,25 @@ private fun HomeDashboardPane(
                                             ),
                                             modifier = Modifier
                                                 .width(210.dp)
+                                                .fillMaxHeight()
                                                 .clickable { onOpenRepo(repo.owner, repo.name) }
                                         ) {
                                             Column(
-                                                modifier = Modifier.padding(14.dp),
-                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier.fillMaxSize().padding(14.dp),
+                                                verticalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Text(
-                                                    text = repo.fullName,
-                                                    style = MaterialTheme.typography.titleSmall,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                if (!repo.description.isNullOrBlank()) {
+                                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                     Text(
-                                                        text = repo.description!!,
+                                                        text = repo.fullName,
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = repo.description?.takeIf { it.isNotBlank() }.orEmpty(),
                                                         style = MaterialTheme.typography.bodySmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        minLines = 2,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -379,7 +385,9 @@ private fun HomeDashboardPane(
                                                         Text(
                                                             text = lang,
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            color = MaterialTheme.colorScheme.primary
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
