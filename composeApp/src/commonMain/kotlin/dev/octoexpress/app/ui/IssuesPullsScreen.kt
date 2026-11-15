@@ -44,9 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +69,7 @@ import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.GitHubLabelChip
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoPredictiveBackContainer
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -79,8 +78,7 @@ import kotlinx.coroutines.launch
 @OptIn(
     ExperimentalMaterial3Api::class,
     ExperimentalMaterial3AdaptiveApi::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalMaterial3ExpressiveApi::class
 )
 @Composable
 fun IssuesPullsScreen(
@@ -107,10 +105,6 @@ fun IssuesPullsScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var requestSeq by remember { mutableStateOf(0) }
-
-    BackHandler(enabled = navigator.canNavigateBack()) {
-        scope.launch { navigator.navigateBack() }
-    }
 
     fun loadItems(forceRefresh: Boolean = false) {
         if (login.isBlank()) return
@@ -180,7 +174,12 @@ fun IssuesPullsScreen(
         }
     }
 
-    ListDetailPaneScaffold(
+    OctoPredictiveBackContainer(
+        enabled = navigator.canNavigateBack(),
+        onBack = { scope.launch { navigator.navigateBack() } },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        ListDetailPaneScaffold(
         directive = navigator.scaffoldDirective,
         value = navigator.scaffoldValue,
         listPane = {
@@ -368,6 +367,7 @@ fun IssuesPullsScreen(
             }
         }
     )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)

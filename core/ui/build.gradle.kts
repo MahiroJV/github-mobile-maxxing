@@ -31,6 +31,7 @@ kotlin {
             api(libs.compose.material3.adaptive.navsuite)
             api(libs.compose.ui)
             api(libs.compose.ui.backhandler)
+            api(libs.navigationevent.compose)
             api(libs.compose.adaptive)
             api(libs.compose.adaptive.layout)
             api(libs.compose.adaptive.navigation)

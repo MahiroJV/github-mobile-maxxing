@@ -31,9 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import coil3.ImageLoader
@@ -65,6 +63,8 @@ import dev.octoexpress.app.ui.SignInScreen
 import dev.octoexpress.app.ui.UserProfileScreen
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoPredictiveBackContainer
+import dev.octoexpress.ui.components.OctoPredictiveOverlayHost
 import dev.octoexpress.ui.theme.OctoExpressTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -216,7 +216,6 @@ fun OctoExpressApp(
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun MainAuthenticatedShell(
     container: AppContainer,
@@ -236,13 +235,6 @@ private fun MainAuthenticatedShell(
         if (deepLinkTarget != null) {
             navState = navState.selectBottomDestination(ShellDestination.INBOX)
         }
-    }
-
-    // Android System Back pops profile/overlay stack or returns to Home tab before exiting app
-    BackHandler(
-        enabled = navState.hasOverlay || navState.currentDestination != ShellDestination.HOME
-    ) {
-        navState = navState.popBackOrReturnHome()
     }
 
     val showMessage: (String) -> Unit = { msg ->
@@ -291,40 +283,12 @@ private fun MainAuthenticatedShell(
             snackbarHost = { SnackbarHost(snackbarHostState) }
         ) { innerPadding ->
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                when {
-                    navState.overlayGistsUser != null -> GistsScreen(
-                        container = container,
-                        userLogin = navState.overlayGistsUser?.takeIf { it.isNotBlank() },
-                        onBack = { navState = navState.copy(overlayGistsUser = null) },
-                        onMessage = showMessage
-                    )
-                    navState.overlayIssue != null -> IssuePullDetailPane(
-                        target = navState.overlayIssue!!,
-                        container = container,
-                        showBackButton = true,
-                        onBack = { navState = navState.copy(overlayIssue = null) },
-                        onMessage = showMessage
-                    )
-                    navState.overlayRepo != null -> RepoDetailScreen(
-                        repo = navState.overlayRepo!!,
-                        container = container,
-                        onBack = { navState = navState.copy(overlayRepo = null) },
-                        onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
-                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
-                        onOpenUser = openUserProfile,
-                        onMessage = showMessage
-                    )
-                    navState.profileBackStack.isNotEmpty() -> UserProfileScreen(
-                        login = navState.profileBackStack.last(),
-                        container = container,
-                        onBack = { navState = navState.copy(profileBackStack = navState.profileBackStack.dropLast(1)) },
-                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
-                        onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
-                        onOpenUser = { nextLogin -> navState = navState.openUserProfile(nextLogin) },
-                        onOpenGists = { targetUser -> navState = navState.copy(overlayGistsUser = targetUser) },
-                        onMessage = showMessage
-                    )
-                    else -> when (navState.currentDestination) {
+                OctoPredictiveBackContainer(
+                    enabled = !navState.hasOverlay && navState.currentDestination != ShellDestination.HOME,
+                    onBack = { navState = navState.popBackOrReturnHome() },
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    when (navState.currentDestination) {
                         ShellDestination.HOME -> HomeScreen(
                             container = container,
                             unreadCount = unreadCount,
@@ -357,6 +321,65 @@ private fun MainAuthenticatedShell(
                             onMessage = showMessage
                         )
                     }
+                }
+
+                OctoPredictiveOverlayHost(
+                    target = navState.profileBackStack.lastOrNull(),
+                    onBack = { navState = navState.copy(profileBackStack = navState.profileBackStack.dropLast(1)) },
+                    contentKey = { it }
+                ) { login ->
+                    UserProfileScreen(
+                        login = login,
+                        container = container,
+                        onBack = { navState = navState.copy(profileBackStack = navState.profileBackStack.dropLast(1)) },
+                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
+                        onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
+                        onOpenUser = { nextLogin -> navState = navState.openUserProfile(nextLogin) },
+                        onOpenGists = { targetUser -> navState = navState.copy(overlayGistsUser = targetUser) },
+                        onMessage = showMessage
+                    )
+                }
+
+                OctoPredictiveOverlayHost(
+                    target = navState.overlayRepo,
+                    onBack = { navState = navState.copy(overlayRepo = null) },
+                    contentKey = { it.fullName }
+                ) { repo ->
+                    RepoDetailScreen(
+                        repo = repo,
+                        container = container,
+                        onBack = { navState = navState.copy(overlayRepo = null) },
+                        onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
+                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
+                        onOpenUser = openUserProfile,
+                        onMessage = showMessage
+                    )
+                }
+
+                OctoPredictiveOverlayHost(
+                    target = navState.overlayIssue,
+                    onBack = { navState = navState.copy(overlayIssue = null) }
+                ) { target ->
+                    IssuePullDetailPane(
+                        target = target,
+                        container = container,
+                        showBackButton = true,
+                        onBack = { navState = navState.copy(overlayIssue = null) },
+                        onMessage = showMessage
+                    )
+                }
+
+                OctoPredictiveOverlayHost(
+                    target = navState.overlayGistsUser,
+                    onBack = { navState = navState.copy(overlayGistsUser = null) },
+                    contentKey = { it }
+                ) { targetUser ->
+                    GistsScreen(
+                        container = container,
+                        userLogin = targetUser.takeIf { it.isNotBlank() },
+                        onBack = { navState = navState.copy(overlayGistsUser = null) },
+                        onMessage = showMessage
+                    )
                 }
             }
         }

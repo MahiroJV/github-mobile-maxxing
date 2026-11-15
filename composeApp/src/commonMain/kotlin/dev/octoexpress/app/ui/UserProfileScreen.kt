@@ -44,9 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,8 +98,7 @@ internal fun formatProfileTabLabel(tab: ProfileTab, profile: UserProfile): Strin
 @OptIn(
     ExperimentalMaterial3Api::class,
     ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalLayoutApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalLayoutApi::class
 )
 @Composable
 fun UserProfileScreen(
@@ -135,10 +132,6 @@ fun UserProfileScreen(
     var isRefreshing by remember(login) { mutableStateOf(false) }
     var errorMsg by remember(login) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-
-    BackHandler(enabled = true) {
-        onBack()
-    }
 
     fun loadProfile(forceRefresh: Boolean = false) {
         scope.launch {

@@ -52,9 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -84,6 +82,7 @@ import dev.octoexpress.ui.components.ExpressiveStatusPill
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFloatingToolbar
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoPredictiveBackContainer
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.UserAvatar
 import dev.octoexpress.ui.components.expressiveAnimateContentSize
@@ -106,8 +105,7 @@ private enum class ReasonFilter(val label: String) {
 @OptIn(
     ExperimentalMaterial3Api::class,
     ExperimentalMaterial3AdaptiveApi::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalMaterial3ExpressiveApi::class
 )
 @Composable
 fun NotificationsScreen(
@@ -140,17 +138,6 @@ fun NotificationsScreen(
     LaunchedEffect(isFilterInputActive) {
         if (isFilterInputActive) {
             filterFocusRequester.requestFocus()
-        }
-    }
-
-    // Android System Back closes active filter input first, or returns from Detail pane
-    BackHandler(enabled = isFilterInputActive || navigator.canNavigateBack()) {
-        when {
-            isFilterInputActive -> {
-                focusManager.clearFocus()
-                isFilterInputActive = false
-            }
-            navigator.canNavigateBack() -> scope.launch { navigator.navigateBack() }
         }
     }
 
@@ -294,7 +281,20 @@ fun NotificationsScreen(
         headerTracker.expand()
     }
 
-    ListDetailPaneScaffold(
+    OctoPredictiveBackContainer(
+        enabled = isFilterInputActive || navigator.canNavigateBack(),
+        onBack = {
+            when {
+                isFilterInputActive -> {
+                    focusManager.clearFocus()
+                    isFilterInputActive = false
+                }
+                navigator.canNavigateBack() -> scope.launch { navigator.navigateBack() }
+            }
+        },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        ListDetailPaneScaffold(
         directive = navigator.scaffoldDirective,
         value = navigator.scaffoldValue,
         listPane = {
@@ -622,6 +622,7 @@ fun NotificationsScreen(
             }
         }
     )
+    }
 }
 
 @Composable

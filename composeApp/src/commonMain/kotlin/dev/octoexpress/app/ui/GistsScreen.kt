@@ -46,9 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -80,6 +78,7 @@ import dev.octoexpress.ui.components.OctoConnectedButtonGroup
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoPredictiveOverlayHost
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.StarActionButton
 import dev.octoexpress.ui.components.UserAvatar
@@ -92,8 +91,7 @@ internal enum class GistsTab(val label: String) {
 
 @OptIn(
     ExperimentalMaterial3Api::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalMaterial3ExpressiveApi::class
 )
 @Composable
 fun GistsScreen(
@@ -135,14 +133,6 @@ fun GistsScreen(
         val shareUrl = resolveGistUrl(gist) ?: return
         clipboard.setText(AnnotatedString(shareUrl))
         onMessage("Copied gist link")
-    }
-
-    BackHandler(enabled = true) {
-        when {
-            showEditorDialog -> if (!mutationBusy) showEditorDialog = false
-            selectedDetail != null -> selectedDetail = null
-            else -> onBack()
-        }
     }
 
     fun loadGists(forceRefresh: Boolean = false) {
@@ -191,38 +181,6 @@ fun GistsScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        val opened = selectedDetail
-        if (opened != null) {
-        GistDetailView(
-            detail = opened,
-            isOwner = selfLogin != null && opened.summary.ownerLogin.equals(selfLogin, ignoreCase = true),
-            onBack = { selectedDetail = null },
-            onToggleStar = {
-                val targetStar = !opened.viewerHasStarred
-                selectedDetail = opened.copy(viewerHasStarred = targetStar)
-                scope.launch {
-                    container.repository.setGistStarred(opened.summary.id, targetStar)
-                        .onSuccess {
-                            onMessage(if (targetStar) "Starred gist" else "Unstarred gist")
-                        }
-                        .onFailure { err ->
-                            selectedDetail = opened
-                            onMessage(err.message ?: "Failed to update star")
-                        }
-                }
-            },
-            onEdit = {
-                editingDetail = opened
-                mutationError = null
-                showEditorDialog = true
-            },
-            onCopyLink = { copyGistLink(opened.summary) },
-            onDelete = {
-                mutationError = null
-                showDeleteConfirm = true
-            }
-        )
-    } else {
         val headerTracker = remember { RepoHeaderCollapseTracker() }
         val headerNestedScroll = remember(headerTracker) { headerTracker.toNestedScrollConnection() }
         val headerVerticalPadding by animateDpAsState(if (headerTracker.isCollapsed) 4.dp else 10.dp)
@@ -370,7 +328,44 @@ fun GistsScreen(
                 }
             }
         }
-    }
+
+        OctoPredictiveOverlayHost(
+            target = selectedDetail,
+            onBack = { selectedDetail = null },
+            contentKey = { it.summary.id }
+        ) { opened ->
+            GistDetailView(
+                detail = opened,
+                isOwner = selfLogin != null && opened.summary.ownerLogin.equals(selfLogin, ignoreCase = true),
+                onBack = { selectedDetail = null },
+                onToggleStar = {
+                    val targetStar = !opened.viewerHasStarred
+                    selectedDetail = opened.copy(viewerHasStarred = targetStar)
+                    scope.launch {
+                        container.repository.setGistStarred(opened.summary.id, targetStar)
+                            .onSuccess {
+                                onMessage(if (targetStar) "Starred gist" else "Unstarred gist")
+                            }
+                            .onFailure { err ->
+                                selectedDetail = opened
+                                onMessage(err.message ?: "Failed to update star")
+                            }
+                    }
+                },
+                onEdit = {
+                    editingDetail = opened
+                    mutationError = null
+                    showEditorDialog = true
+                },
+                onCopyLink = { copyGistLink(opened.summary) },
+                onDelete = {
+                    mutationError = null
+                    showDeleteConfirm = true
+                }
+            )
+        }
+
+        val opened = selectedDetail
 
         if (showEditorDialog) {
             val editing = editingDetail

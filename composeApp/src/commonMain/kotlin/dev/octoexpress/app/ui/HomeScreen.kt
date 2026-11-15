@@ -45,9 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -86,6 +84,7 @@ import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoPredictiveOverlayHost
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.formatCompactCount
 import dev.octoexpress.ui.components.UserAvatar
@@ -100,8 +99,7 @@ private enum class FeedTab(val label: String) {
 
 @OptIn(
     ExperimentalMaterial3Api::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalMaterial3ExpressiveApi::class
 )
 @Composable
 fun HomeScreen(
@@ -117,27 +115,34 @@ fun HomeScreen(
     var selectedRepo by remember { mutableStateOf<RepoSummary?>(null) }
     var selectedIssueTarget by remember { mutableStateOf<IssuePullTarget?>(null) }
 
-    BackHandler(enabled = selectedIssueTarget != null || selectedRepo != null) {
-        when {
-            selectedIssueTarget != null -> selectedIssueTarget = null
-            selectedRepo != null -> selectedRepo = null
-        }
-    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        HomeDashboardPane(
+            container = container,
+            unreadCount = unreadCount,
+            onNavigateInbox = onNavigateInbox,
+            onNavigateIssuesPrs = onNavigateIssuesPrs,
+            onNavigateRepos = onNavigateRepos,
+            onOpenRepo = { owner, name ->
+                selectedRepo = RepoSummary(
+                    id = "$owner/$name",
+                    name = name,
+                    owner = owner,
+                    fullName = "$owner/$name"
+                )
+            },
+            onOpenIssueOrPull = { selectedIssueTarget = it },
+            onOpenGists = onOpenGists,
+            onOpenUser = onOpenUser,
+            onMessage = onMessage
+        )
 
-    when {
-        selectedIssueTarget != null -> {
-            IssuePullDetailPane(
-                target = selectedIssueTarget!!,
-                container = container,
-                showBackButton = true,
-                onBack = { selectedIssueTarget = null },
-                onMessage = onMessage
-            )
-        }
-
-        selectedRepo != null -> {
+        OctoPredictiveOverlayHost(
+            target = selectedRepo,
+            onBack = { selectedRepo = null },
+            contentKey = { it.fullName }
+        ) { repo ->
             RepoDetailScreen(
-                repo = selectedRepo!!,
+                repo = repo,
                 container = container,
                 onBack = { selectedRepo = null },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
@@ -147,24 +152,15 @@ fun HomeScreen(
             )
         }
 
-        else -> {
-            HomeDashboardPane(
+        OctoPredictiveOverlayHost(
+            target = selectedIssueTarget,
+            onBack = { selectedIssueTarget = null }
+        ) { target ->
+            IssuePullDetailPane(
+                target = target,
                 container = container,
-                unreadCount = unreadCount,
-                onNavigateInbox = onNavigateInbox,
-                onNavigateIssuesPrs = onNavigateIssuesPrs,
-                onNavigateRepos = onNavigateRepos,
-                onOpenRepo = { owner, name ->
-                    selectedRepo = RepoSummary(
-                        id = "$owner/$name",
-                        name = name,
-                        owner = owner,
-                        fullName = "$owner/$name"
-                    )
-                },
-                onOpenIssueOrPull = { selectedIssueTarget = it },
-                onOpenGists = onOpenGists,
-                onOpenUser = onOpenUser,
+                showBackButton = true,
+                onBack = { selectedIssueTarget = null },
                 onMessage = onMessage
             )
         }

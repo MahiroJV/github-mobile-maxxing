@@ -79,9 +79,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
@@ -168,6 +166,8 @@ import dev.octoexpress.ui.components.OctoDropdownSelector
 import dev.octoexpress.ui.components.OctoFilledIcons
 import dev.octoexpress.ui.components.OctoFullScreenEditorScaffold
 import dev.octoexpress.ui.components.OctoLoadingState
+import dev.octoexpress.ui.components.OctoPredictiveBackContainer
+import dev.octoexpress.ui.components.OctoPredictiveOverlayHost
 import dev.octoexpress.ui.components.OctoStarAmber
 import dev.octoexpress.ui.components.OctoWavyProgress
 import dev.octoexpress.ui.components.StarActionButton
@@ -200,7 +200,6 @@ internal enum class RepoDetailTab(val label: String) {
 
 private val TRENDING_LANGUAGES = listOf("All", "Kotlin", "TypeScript", "Python", "Rust", "Go", "Swift")
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun ReposScreen(
     container: AppContainer,
@@ -211,24 +210,37 @@ fun ReposScreen(
     var selectedInitialFilePath by remember { mutableStateOf<String?>(null) }
     var selectedIssueTarget by remember { mutableStateOf<IssuePullTarget?>(null) }
 
-    BackHandler(enabled = selectedIssueTarget != null) {
-        selectedIssueTarget = null
-    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        RepoListPane(
+            container = container,
+            onSelectRepo = {
+                selectedInitialFilePath = null
+                selectedRepo = it
+            },
+            onSelectCodeHit = { hit ->
+                selectedInitialFilePath = hit.path
+                selectedRepo = RepoSummary(
+                    id = "code_${hit.repoFullName}",
+                    name = hit.repoName,
+                    owner = hit.repoOwner,
+                    fullName = hit.repoFullName
+                )
+            },
+            onSelectIssuePull = { selectedIssueTarget = it },
+            onSelectUser = onOpenUser,
+            onMessage = onMessage
+        )
 
-    when {
-        selectedIssueTarget != null -> {
-            IssuePullDetailPane(
-                target = selectedIssueTarget!!,
-                container = container,
-                showBackButton = true,
-                onBack = { selectedIssueTarget = null },
-                onMessage = onMessage
-            )
-        }
-
-        selectedRepo != null -> {
+        OctoPredictiveOverlayHost(
+            target = selectedRepo,
+            onBack = {
+                selectedRepo = null
+                selectedInitialFilePath = null
+            },
+            contentKey = { it.fullName }
+        ) { repo ->
             RepoDetailScreen(
-                repo = selectedRepo!!,
+                repo = repo,
                 container = container,
                 initialFilePath = selectedInitialFilePath,
                 onBack = {
@@ -245,24 +257,15 @@ fun ReposScreen(
             )
         }
 
-        else -> {
-            RepoListPane(
+        OctoPredictiveOverlayHost(
+            target = selectedIssueTarget,
+            onBack = { selectedIssueTarget = null }
+        ) { target ->
+            IssuePullDetailPane(
+                target = target,
                 container = container,
-                onSelectRepo = {
-                    selectedInitialFilePath = null
-                    selectedRepo = it
-                },
-                onSelectCodeHit = { hit ->
-                    selectedInitialFilePath = hit.path
-                    selectedRepo = RepoSummary(
-                        id = "code_${hit.repoFullName}",
-                        name = hit.repoName,
-                        owner = hit.repoOwner,
-                        fullName = hit.repoFullName
-                    )
-                },
-                onSelectIssuePull = { selectedIssueTarget = it },
-                onSelectUser = onOpenUser,
+                showBackButton = true,
+                onBack = { selectedIssueTarget = null },
                 onMessage = onMessage
             )
         }
@@ -1096,8 +1099,7 @@ private enum class RepoPeopleTab(val label: String) {
 
 @OptIn(
     ExperimentalLayoutApi::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalMaterial3ExpressiveApi::class
 )
 @Composable
 fun RepoDetailScreen(
@@ -1596,40 +1598,15 @@ fun RepoDetailScreen(
         }
     }
 
-    // Android System Back navigates editor -> commit -> compare -> file -> parent dir -> repo list
-    BackHandler(enabled = true) {
-        when {
-            showFileEditorDialog -> if (!fileMutationBusy) showFileEditorDialog = false
-            showCreateReleaseDialog -> if (!creatingRelease) showCreateReleaseDialog = false
-            showCreateDiscussionDialog -> if (!creatingDiscussion) showCreateDiscussionDialog = false
-            showCreatePrDialog -> if (!creatingPr) showCreatePrDialog = false
-            showCreateIssueDialog -> showCreateIssueDialog = false
-            activeTab == RepoDetailTab.ACTIONS && openedLogJob != null -> {
-                openedLogJob = null
-                jobLogsText = null
-            }
-            activeTab == RepoDetailTab.ACTIONS && openedRun != null -> {
-                openedRun = null
-                runJobs = null
-            }
-            activeTab == RepoDetailTab.DISCUSSIONS && openedDiscussionNumber != null -> {
-                openedDiscussionNumber = null
-                discussionDetail = null
-            }
-            activeTab == RepoDetailTab.CODE && openedCommitSha != null -> {
-                openedCommitSha = null
-                openedCommitDetail = null
-            }
-            activeTab == RepoDetailTab.CODE && showCompareView -> showCompareView = false
-            activeTab == RepoDetailTab.CODE && showCommitsView -> showCommitsView = false
-            openedFile != null -> openedFile = null
-            activeTab == RepoDetailTab.CODE && currentPath.isNotBlank() -> {
-                val parent = currentPath.substringBeforeLast('/', "")
-                loadDirectory(parent, currentRef)
-            }
-            else -> onBack()
-        }
-    }
+    val hasInnerRepoBack = (activeTab == RepoDetailTab.ACTIONS && (openedLogJob != null || openedRun != null)) ||
+        (activeTab == RepoDetailTab.DISCUSSIONS && openedDiscussionNumber != null) ||
+        (activeTab == RepoDetailTab.CODE && (openedCommitSha != null || showCompareView || showCommitsView || currentPath.isNotBlank())) ||
+        openedFile != null
+    val hasOpenEditor = showFileEditorDialog ||
+        showCreateReleaseDialog ||
+        showCreateDiscussionDialog ||
+        showCreatePrDialog ||
+        showCreateIssueDialog
 
     LaunchedEffect(repo.fullName, initialFilePath) {
         isLoading = detail == null && entries.isEmpty()
@@ -1740,6 +1717,37 @@ fun RepoDetailScreen(
     val repoHeaderVerticalPadding by animateDpAsState(if (headerCollapseTracker.isCollapsed) 4.dp else 12.dp)
 
     Box(modifier = Modifier.fillMaxSize()) {
+        OctoPredictiveBackContainer(
+            enabled = hasInnerRepoBack && !hasOpenEditor,
+            onBack = {
+                when {
+                    activeTab == RepoDetailTab.ACTIONS && openedLogJob != null -> {
+                        openedLogJob = null
+                        jobLogsText = null
+                    }
+                    activeTab == RepoDetailTab.ACTIONS && openedRun != null -> {
+                        openedRun = null
+                        runJobs = null
+                    }
+                    activeTab == RepoDetailTab.DISCUSSIONS && openedDiscussionNumber != null -> {
+                        openedDiscussionNumber = null
+                        discussionDetail = null
+                    }
+                    activeTab == RepoDetailTab.CODE && openedCommitSha != null -> {
+                        openedCommitSha = null
+                        openedCommitDetail = null
+                    }
+                    activeTab == RepoDetailTab.CODE && showCompareView -> showCompareView = false
+                    activeTab == RepoDetailTab.CODE && showCommitsView -> showCommitsView = false
+                    openedFile != null -> openedFile = null
+                    activeTab == RepoDetailTab.CODE && currentPath.isNotBlank() -> {
+                        val parent = currentPath.substringBeforeLast('/', "")
+                        loadDirectory(parent, currentRef)
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        ) {
         Column(modifier = Modifier.fillMaxSize()) {
         // Header
         Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
@@ -2688,6 +2696,7 @@ fun RepoDetailScreen(
                     }
                 )
             }
+        }
         }
         }
     }

@@ -34,9 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,7 +69,6 @@ fun formatEditorMetrics(text: String): String {
  * Full-screen editor surface replacing cramped modal dialogs for file, Gist,
  * issue, PR, release, discussion, and comment editing.
  */
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun OctoFullScreenEditorScaffold(
     title: String,
@@ -98,14 +95,15 @@ fun OctoFullScreenEditorScaffold(
     }
     var isPreviewMode by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = true) {
-        if (!isSubmitting) onDismiss()
-    }
-
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        modifier = modifier.fillMaxSize().imePadding()
+    OctoPredictiveBackContainer(
+        enabled = true,
+        onBack = { if (!isSubmitting) onDismiss() },
+        modifier = modifier
     ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxSize().imePadding()
+        ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(modifier = Modifier.fillMaxWidth().statusBarsPadding()) {
@@ -276,5 +274,6 @@ fun OctoFullScreenEditorScaffold(
                 }
             }
         }
+    }
     }
 }
