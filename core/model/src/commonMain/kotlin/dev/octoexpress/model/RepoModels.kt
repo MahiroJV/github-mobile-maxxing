@@ -60,7 +60,8 @@ data class FileContent(
     val size: Long,
     val content: String,
     val isBinary: Boolean = false,
-    val htmlUrl: String = ""
+    val htmlUrl: String = "",
+    val sha: String = ""
 )
 
 @Serializable

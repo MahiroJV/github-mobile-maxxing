@@ -589,6 +589,41 @@ class GitHubRepository(
         }
     }
 
+    suspend fun upsertRepoFile(
+        owner: String,
+        repo: String,
+        path: String,
+        content: String,
+        message: String,
+        branch: String? = null,
+        existingSha: String? = null
+    ): Result<String> = runCatching {
+        restService.upsertRepoFile(owner, repo, path, content, message, branch, existingSha)
+    }.onSuccess {
+        invalidateRepoTreeCaches(owner, repo)
+    }
+
+    suspend fun deleteRepoFile(
+        owner: String,
+        repo: String,
+        path: String,
+        sha: String,
+        message: String,
+        branch: String? = null
+    ): Result<String> = runCatching {
+        restService.deleteRepoFile(owner, repo, path, sha, message, branch)
+    }.onSuccess {
+        invalidateRepoTreeCaches(owner, repo)
+    }
+
+    private suspend fun invalidateRepoTreeCaches(owner: String, repo: String) {
+        dirCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        fileCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        readmeCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        commitsCache.invalidateWhere { it.owner == owner && it.repo == repo }
+        repoDetailCache.invalidate(RepoKey(owner, repo))
+    }
+
     suspend fun setStarred(owner: String, repo: String, starred: Boolean): Result<Unit> = runCatching {
         restService.setStarred(owner, repo, starred)
     }.onSuccess {

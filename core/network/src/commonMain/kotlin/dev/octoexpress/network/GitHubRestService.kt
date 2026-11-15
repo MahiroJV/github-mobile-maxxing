@@ -610,6 +610,31 @@ private data class RestMilestoneDto(
     @SerialName("closed_issues") val closedIssues: Int = 0
 )
 
+@Serializable
+private data class UpsertFileContentRequest(
+    val message: String,
+    val content: String,
+    val branch: String? = null,
+    val sha: String? = null
+)
+
+@Serializable
+private data class DeleteFileContentRequest(
+    val message: String,
+    val sha: String,
+    val branch: String? = null
+)
+
+@Serializable
+private data class FileMutationCommitDto(
+    val sha: String = ""
+)
+
+@Serializable
+private data class FileMutationResultDto(
+    val commit: FileMutationCommitDto? = null
+)
+
 class GitHubRestService(
     private val httpClient: HttpClient,
     private val baseUrl: String = "https://api.github.com"
@@ -1218,7 +1243,8 @@ class GitHubRestService(
                     size = dto.size,
                     content = "",
                     isBinary = true,
-                    htmlUrl = dto.htmlUrl
+                    htmlUrl = dto.htmlUrl,
+                    sha = dto.sha
                 )
             }
             bytes.decodeToString()
@@ -1231,8 +1257,68 @@ class GitHubRestService(
             size = dto.size,
             content = decoded,
             isBinary = false,
-            htmlUrl = dto.htmlUrl
+            htmlUrl = dto.htmlUrl,
+            sha = dto.sha
         )
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    suspend fun upsertRepoFile(
+        owner: String,
+        repo: String,
+        path: String,
+        content: String,
+        message: String,
+        branch: String? = null,
+        existingSha: String? = null
+    ): String {
+        val cleanPath = path.trim().trimStart('/')
+        require(cleanPath.isNotEmpty()) { "File path cannot be blank" }
+        val encoded = Base64.Default.encode(content.encodeToByteArray())
+        val res = httpClient.put("$baseUrl/repos/$owner/$repo/contents/$cleanPath") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                UpsertFileContentRequest(
+                    message = message.trim().ifBlank {
+                        if (existingSha.isNullOrBlank()) "Create $cleanPath" else "Update $cleanPath"
+                    },
+                    content = encoded,
+                    branch = branch?.trim()?.takeIf { it.isNotEmpty() },
+                    sha = existingSha?.trim()?.takeIf { it.isNotEmpty() }
+                )
+            )
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to commit file (${res.status.value})")
+        }
+        return res.body<FileMutationResultDto>().commit?.sha.orEmpty()
+    }
+
+    suspend fun deleteRepoFile(
+        owner: String,
+        repo: String,
+        path: String,
+        sha: String,
+        message: String,
+        branch: String? = null
+    ): String {
+        val cleanPath = path.trim().trimStart('/')
+        require(cleanPath.isNotEmpty()) { "File path cannot be blank" }
+        require(sha.isNotBlank()) { "Existing file SHA is required to delete" }
+        val res = httpClient.delete("$baseUrl/repos/$owner/$repo/contents/$cleanPath") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                DeleteFileContentRequest(
+                    message = message.trim().ifBlank { "Delete $cleanPath" },
+                    sha = sha,
+                    branch = branch?.trim()?.takeIf { it.isNotEmpty() }
+                )
+            )
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to delete file (${res.status.value})")
+        }
+        return res.body<FileMutationResultDto>().commit?.sha.orEmpty()
     }
 
     @OptIn(ExperimentalEncodingApi::class)

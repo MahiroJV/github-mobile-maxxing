@@ -117,6 +117,7 @@ import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.Star
 import com.composables.icons.lucide.Tag
+import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.Users
 import com.composables.icons.lucide.X
 import dev.octoexpress.app.AppContainer
@@ -1097,6 +1098,12 @@ fun RepoDetailScreen(
     var creatingPr by remember { mutableStateOf(false) }
     var createPrError by remember { mutableStateOf<String?>(null) }
 
+    var showFileEditorDialog by remember { mutableStateOf(false) }
+    var editingExistingFile by remember { mutableStateOf<FileContent?>(null) }
+    var showDeleteFileDialog by remember { mutableStateOf(false) }
+    var fileMutationBusy by remember { mutableStateOf(false) }
+    var fileMutationError by remember { mutableStateOf<String?>(null) }
+
     var showBranchMenu by remember { mutableStateOf(false) }
     var showCreateIssueDialog by remember { mutableStateOf(false) }
     var newIssueTitle by remember { mutableStateOf("") }
@@ -1921,7 +1928,11 @@ fun RepoDetailScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             FilledTonalButton(
                                 onClick = {
                                     val parent = currentPath.substringBeforeLast('/', "")
@@ -1932,15 +1943,41 @@ fun RepoDetailScreen(
                             ) {
                                 Icon(Lucide.ArrowLeft, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Back to directory")
+                                Text("Back")
                             }
-                            Spacer(Modifier.width(12.dp))
                             Text(
                                 text = file.path,
                                 style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Monospace),
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            if (!file.isBinary && file.sha.isNotBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        editingExistingFile = file
+                                        fileMutationError = null
+                                        showFileEditorDialog = true
+                                    }
+                                ) {
+                                    Icon(Lucide.Pencil, contentDescription = "Edit file", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            if (file.sha.isNotBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        fileMutationError = null
+                                        showDeleteFileDialog = true
+                                    }
+                                ) {
+                                    Icon(
+                                        Lucide.Trash2,
+                                        contentDescription = "Delete file",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
                         }
                         when {
                             file.isBinary -> Text("Binary file (${file.size} bytes)")
@@ -1969,21 +2006,39 @@ fun RepoDetailScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Breadcrumbs
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        // Breadcrumbs + New File action
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            TextButton(onClick = { loadDirectory("", currentRef) }) {
-                                Text(repo.name)
-                            }
-                            val segments = if (currentPath.isBlank()) emptyList() else currentPath.split('/')
-                            segments.forEachIndexed { idx, segment ->
-                                val targetPath = segments.take(idx + 1).joinToString("/")
-                                Text("/", modifier = Modifier.align(Alignment.CenterVertically))
-                                TextButton(onClick = { loadDirectory(targetPath, currentRef) }) {
-                                    Text(segment)
+                            FlowRow(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                TextButton(onClick = { loadDirectory("", currentRef) }) {
+                                    Text(repo.name)
                                 }
+                                val segments = if (currentPath.isBlank()) emptyList() else currentPath.split('/')
+                                segments.forEachIndexed { idx, segment ->
+                                    val targetPath = segments.take(idx + 1).joinToString("/")
+                                    Text("/", modifier = Modifier.align(Alignment.CenterVertically))
+                                    TextButton(onClick = { loadDirectory(targetPath, currentRef) }) {
+                                        Text(segment)
+                                    }
+                                }
+                            }
+                            FilledTonalButton(
+                                onClick = {
+                                    editingExistingFile = null
+                                    fileMutationError = null
+                                    showFileEditorDialog = true
+                                }
+                            ) {
+                                Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("File")
                             }
                         }
 
@@ -2627,6 +2682,95 @@ fun RepoDetailScreen(
                     }.onFailure { err ->
                         creatingPr = false
                         createPrError = err.message ?: "Failed to create pull request"
+                    }
+                }
+            }
+        )
+    }
+
+    if (showFileEditorDialog) {
+        val editing = editingExistingFile
+        val defaultPath = if (editing != null) {
+            editing.path
+        } else if (currentPath.isBlank()) {
+            ""
+        } else {
+            "${currentPath.trimEnd('/')}/"
+        }
+        RepoFileEditorDialog(
+            isCreating = editing == null,
+            initialPath = defaultPath,
+            initialContent = editing?.content.orEmpty(),
+            initialBranch = currentRef,
+            isSubmitting = fileMutationBusy,
+            errorMsg = fileMutationError,
+            onDismiss = { if (!fileMutationBusy) showFileEditorDialog = false },
+            onCommit = { targetPath, updatedContent, commitMessage, branchName ->
+                scope.launch {
+                    fileMutationBusy = true
+                    fileMutationError = null
+                    container.repository.upsertRepoFile(
+                        owner = repo.owner,
+                        repo = repo.name,
+                        path = targetPath,
+                        content = updatedContent,
+                        message = commitMessage,
+                        branch = branchName,
+                        existingSha = editing?.sha
+                    ).onSuccess { commitSha ->
+                        fileMutationBusy = false
+                        showFileEditorDialog = false
+                        if (branchName.isNotBlank() && branchName != currentRef) {
+                            currentRef = branchName
+                        }
+                        val targetRef = branchName.ifBlank { currentRef }
+                        val short = commitSha.take(7)
+                        onMessage(if (short.isNotBlank()) "Committed $targetPath ($short)" else "Committed $targetPath")
+                        if (editing != null) {
+                            loadFile(targetPath, targetRef)
+                        } else {
+                            loadDirectory(currentPath, targetRef, forceRefresh = true)
+                        }
+                    }.onFailure { err ->
+                        fileMutationBusy = false
+                        fileMutationError = err.message ?: "Failed to commit file"
+                    }
+                }
+            }
+        )
+    }
+
+    if (showDeleteFileDialog && openedFile != null) {
+        val fileToDelete = openedFile!!
+        DeleteRepoFileDialog(
+            filePath = fileToDelete.path,
+            initialBranch = currentRef,
+            isSubmitting = fileMutationBusy,
+            errorMsg = fileMutationError,
+            onDismiss = { if (!fileMutationBusy) showDeleteFileDialog = false },
+            onDelete = { commitMessage, branchName ->
+                scope.launch {
+                    fileMutationBusy = true
+                    fileMutationError = null
+                    container.repository.deleteRepoFile(
+                        owner = repo.owner,
+                        repo = repo.name,
+                        path = fileToDelete.path,
+                        sha = fileToDelete.sha,
+                        message = commitMessage,
+                        branch = branchName
+                    ).onSuccess { commitSha ->
+                        fileMutationBusy = false
+                        showDeleteFileDialog = false
+                        openedFile = null
+                        val targetRef = branchName.ifBlank { currentRef }
+                        if (targetRef != currentRef) currentRef = targetRef
+                        val short = commitSha.take(7)
+                        onMessage(if (short.isNotBlank()) "Deleted ${fileToDelete.name} ($short)" else "Deleted ${fileToDelete.name}")
+                        loadDirectory(currentPath, targetRef, forceRefresh = true)
+                    }.onFailure { err ->
+                        fileMutationBusy = false
+                        fileMutationError = err.message ?: "Failed to delete file"
                     }
                 }
             }
@@ -3792,6 +3936,162 @@ private fun DispatchWorkflowDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun RepoFileEditorDialog(
+    isCreating: Boolean,
+    initialPath: String,
+    initialContent: String,
+    initialBranch: String,
+    isSubmitting: Boolean,
+    errorMsg: String?,
+    onDismiss: () -> Unit,
+    onCommit: (path: String, content: String, message: String, branch: String) -> Unit
+) {
+    var path by remember(initialPath) { mutableStateOf(initialPath) }
+    var content by remember(initialContent) { mutableStateOf(initialContent) }
+    var commitMessage by remember(initialPath, isCreating) {
+        val fileName = initialPath.substringAfterLast('/').ifBlank { "file" }
+        mutableStateOf(if (isCreating) "Create $fileName" else "Update $fileName")
+    }
+    var branch by remember(initialBranch) { mutableStateOf(initialBranch) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isCreating) "Create File" else "Edit File") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    enabled = isCreating && !isSubmitting,
+                    label = { Text("Path (e.g. docs/notes.md)") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    enabled = !isSubmitting,
+                    label = { Text("File contents") },
+                    minLines = 6,
+                    maxLines = 12,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = commitMessage,
+                    onValueChange = { commitMessage = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Commit message") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = branch,
+                    onValueChange = { branch = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Branch") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (!errorMsg.isNullOrBlank()) {
+                    Text(
+                        text = errorMsg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !isSubmitting && path.trim().trimStart('/').isNotEmpty(),
+                onClick = { onCommit(path.trim().trimStart('/'), content, commitMessage.trim(), branch.trim()) }
+            ) {
+                Text(if (isSubmitting) "Committing..." else "Commit changes")
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun DeleteRepoFileDialog(
+    filePath: String,
+    initialBranch: String,
+    isSubmitting: Boolean,
+    errorMsg: String?,
+    onDismiss: () -> Unit,
+    onDelete: (message: String, branch: String) -> Unit
+) {
+    var commitMessage by remember(filePath) {
+        mutableStateOf("Delete ${filePath.substringAfterLast('/')}")
+    }
+    var branch by remember(initialBranch) { mutableStateOf(initialBranch) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete File") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Delete $filePath on branch $branch? This creates a new commit removing the file.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = commitMessage,
+                    onValueChange = { commitMessage = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Commit message") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = branch,
+                    onValueChange = { branch = it },
+                    enabled = !isSubmitting,
+                    label = { Text("Branch") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (!errorMsg.isNullOrBlank()) {
+                    Text(
+                        text = errorMsg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !isSubmitting,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
+                ),
+                onClick = { onDelete(commitMessage.trim(), branch.trim()) }
+            ) {
+                Text(if (isSubmitting) "Deleting..." else "Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !isSubmitting, onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
