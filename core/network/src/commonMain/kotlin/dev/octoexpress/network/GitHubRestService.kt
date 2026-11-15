@@ -8,6 +8,7 @@ import dev.octoexpress.model.CheckRunSummary
 import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
+import dev.octoexpress.model.ContributorStat
 import dev.octoexpress.model.DependabotAlertSummary
 import dev.octoexpress.model.FileChangeStatus
 import dev.octoexpress.model.FileContent
@@ -35,6 +36,7 @@ import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.TreeEntryType
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
+import dev.octoexpress.model.WeeklyCommitActivity
 import dev.octoexpress.model.WorkflowJobStep
 import dev.octoexpress.model.WorkflowJobSummary
 import dev.octoexpress.model.WorkflowRunSummary
@@ -537,6 +539,28 @@ private data class RestUserFollowItemDto(
     val login: String,
     @SerialName("avatar_url") val avatarUrl: String = "",
     @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+private data class RestCommitActivityDto(
+    val week: Long = 0L,
+    val total: Int = 0,
+    val days: List<Int> = emptyList()
+)
+
+@Serializable
+private data class RestContributorWeekDto(
+    val w: Long = 0L,
+    val a: Int = 0,
+    val d: Int = 0,
+    val c: Int = 0
+)
+
+@Serializable
+private data class RestContributorStatsDto(
+    val total: Int = 0,
+    val weeks: List<RestContributorWeekDto> = emptyList(),
+    val author: RestUserFollowItemDto? = null
 )
 
 @Serializable
@@ -1899,6 +1923,63 @@ class GitHubRestService(
         return res.body<List<RestUserFollowItemDto>>().map {
             UserSummary(login = it.login, avatarUrl = it.avatarUrl, htmlUrl = it.htmlUrl)
         }
+    }
+
+    suspend fun fetchRepoLanguages(owner: String, repo: String): Map<String, Long> {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/languages")
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load languages (${res.status.value})")
+        }
+        return res.body<Map<String, Long>>()
+    }
+
+    /**
+     * Fetches weekly commit counts over the past year.
+     * GitHub returns HTTP 202 while precomputing cached statistics; we surface `computing = true` instead of throwing.
+     */
+    suspend fun fetchRepoCommitActivity(owner: String, repo: String): Pair<List<WeeklyCommitActivity>, Boolean> {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/stats/commit_activity")
+        if (res.status.value == 202) return emptyList<WeeklyCommitActivity>() to true
+        if (res.status.value == 204 || res.status.value == 404) return emptyList<WeeklyCommitActivity>() to false
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load commit activity (${res.status.value})")
+        }
+        val list = res.body<List<RestCommitActivityDto>>().map {
+            WeeklyCommitActivity(weekEpochSeconds = it.week, total = it.total, days = it.days)
+        }
+        return list to false
+    }
+
+    /**
+     * Fetches contributor commit & line-change stats.
+     * Handles HTTP 202 computing responses gracefully so Insights UI can show a warm-up banner.
+     */
+    suspend fun fetchRepoContributorStats(owner: String, repo: String): Pair<List<ContributorStat>, Boolean> {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/stats/contributors")
+        if (res.status.value == 202) return emptyList<ContributorStat>() to true
+        if (res.status.value == 204 || res.status.value == 404) return emptyList<ContributorStat>() to false
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load contributor stats (${res.status.value})")
+        }
+        val stats = res.body<List<RestContributorStatsDto>>()
+            .mapNotNull { dto ->
+                val author = dto.author ?: return@mapNotNull null
+                if (author.login.isBlank()) return@mapNotNull null
+                ContributorStat(
+                    login = author.login,
+                    avatarUrl = author.avatarUrl,
+                    htmlUrl = author.htmlUrl,
+                    totalCommits = dto.total,
+                    additions = dto.weeks.sumOf { it.a },
+                    deletions = dto.weeks.sumOf { it.d }
+                )
+            }
+            .sortedByDescending { it.totalCommits }
+            .take(15)
+        return stats to false
     }
 
     private fun normalizeOwnerRepo(owner: String, repo: String): Pair<String, String> {

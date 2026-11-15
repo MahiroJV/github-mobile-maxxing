@@ -96,6 +96,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Activity
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.ArrowLeftRight
 import com.composables.icons.lucide.Bookmark
@@ -148,6 +149,7 @@ import dev.octoexpress.model.IssueOrPullSummary
 import dev.octoexpress.model.IssueStateFilter
 import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
+import dev.octoexpress.model.RepoInsightsData
 import dev.octoexpress.model.RepoSecurityOverview
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.resolveRepoCapabilities
@@ -191,7 +193,8 @@ internal enum class RepoDetailTab(val label: String) {
     ACTIONS("Actions"),
     RELEASES("Releases"),
     DISCUSSIONS("Discussions"),
-    SECURITY("Security")
+    SECURITY("Security"),
+    INSIGHTS("Insights")
 }
 
 private val TRENDING_LANGUAGES = listOf("All", "Kotlin", "TypeScript", "Python", "Rust", "Go", "Swift")
@@ -1230,6 +1233,11 @@ fun RepoDetailScreen(
     }
     var securityLoading by remember(repo.fullName) { mutableStateOf(false) }
     var securityError by remember(repo.fullName) { mutableStateOf<String?>(null) }
+    var insightsData by remember(repo.fullName) {
+        mutableStateOf(container.repository.peekRepoInsights(repo.owner, repo.name))
+    }
+    var insightsLoading by remember(repo.fullName) { mutableStateOf(false) }
+    var insightsError by remember(repo.fullName) { mutableStateOf<String?>(null) }
 
     fun loadDiscussions(categoryId: String? = selectedDiscussionCategoryId, forceRefresh: Boolean = false) {
         val reqSeq = ++discussionsRequestSeq
@@ -1303,6 +1311,32 @@ fun RepoDetailScreen(
                 .onFailure {
                     securityError = it.message ?: "Failed to load security overview"
                     securityLoading = false
+                }
+        }
+    }
+
+    fun loadInsights(forceRefresh: Boolean = false) {
+        val targetOwner = detail?.summary?.owner?.takeIf { it.isNotBlank() }
+            ?: repo.owner.ifBlank { repo.fullName.substringBefore('/', "") }.trim()
+        val targetRepo = detail?.summary?.name?.takeIf { it.isNotBlank() }
+            ?: repo.name.ifBlank { repo.fullName.substringAfter('/', repo.name) }.trim()
+        scope.launch {
+            val cached = container.repository.peekRepoInsights(targetOwner, targetRepo)
+            if (cached != null) {
+                insightsData = cached
+                insightsLoading = false
+            } else {
+                insightsLoading = true
+            }
+            insightsError = null
+            container.repository.getRepoInsights(targetOwner, targetRepo, forceRefresh = forceRefresh)
+                .onSuccess {
+                    insightsData = it
+                    insightsLoading = false
+                }
+                .onFailure {
+                    insightsError = it.message ?: "Failed to load insights"
+                    insightsLoading = false
                 }
         }
     }
@@ -1661,6 +1695,9 @@ fun RepoDetailScreen(
         if (activeTab == RepoDetailTab.SECURITY) {
             loadSecurityOverview(forceRefresh = false)
         }
+        if (activeTab == RepoDetailTab.INSIGHTS) {
+            loadInsights(forceRefresh = false)
+        }
     }
 
     LaunchedEffect(activeTab, issueStateFilter, repo.fullName) {
@@ -2006,6 +2043,7 @@ fun RepoDetailScreen(
                             RepoDetailTab.RELEASES -> Lucide.Tag
                             RepoDetailTab.DISCUSSIONS -> Lucide.MessageSquare
                             RepoDetailTab.SECURITY -> Lucide.ShieldCheck
+                            RepoDetailTab.INSIGHTS -> Lucide.Activity
                         }
                         val selected = activeTab == tab
                         Tab(
@@ -2588,6 +2626,16 @@ fun RepoDetailScreen(
                     isLoading = securityLoading,
                     errorMsg = securityError,
                     onRefresh = { loadSecurityOverview(forceRefresh = true) }
+                )
+            }
+
+            RepoDetailTab.INSIGHTS -> {
+                RepoInsightsTabContent(
+                    insights = insightsData,
+                    isLoading = insightsLoading,
+                    errorMsg = insightsError,
+                    onRefresh = { loadInsights(forceRefresh = true) },
+                    onOpenUser = onOpenUser
                 )
             }
 

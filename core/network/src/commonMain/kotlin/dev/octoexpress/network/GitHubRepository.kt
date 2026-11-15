@@ -9,6 +9,7 @@ import dev.octoexpress.model.CodeSearchHit
 import dev.octoexpress.model.CommitDetail
 import dev.octoexpress.model.CommitSummary
 import dev.octoexpress.model.ContributionCalendar
+import dev.octoexpress.model.ContributorStat
 import dev.octoexpress.model.DependabotAlertSummary
 import dev.octoexpress.model.DiscussionComment
 import dev.octoexpress.model.DiscussionDetail
@@ -32,6 +33,7 @@ import dev.octoexpress.model.PullFileChange
 import dev.octoexpress.model.RateLimitInfo
 import dev.octoexpress.model.ReleaseSummary
 import dev.octoexpress.model.RepoDetail
+import dev.octoexpress.model.RepoInsightsData
 import dev.octoexpress.model.RepoSecurityOverview
 import dev.octoexpress.model.RepoSummary
 import dev.octoexpress.model.ReviewEvent
@@ -41,9 +43,11 @@ import dev.octoexpress.model.TreeEntry
 import dev.octoexpress.model.UserProfile
 import dev.octoexpress.model.UserSummary
 import dev.octoexpress.model.ViewerProfile
+import dev.octoexpress.model.WeeklyCommitActivity
 import dev.octoexpress.model.WorkflowJobSummary
 import dev.octoexpress.model.WorkflowRunSummary
 import dev.octoexpress.model.WorkflowSummary
+import dev.octoexpress.model.computeLanguageShares
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -206,6 +210,7 @@ class GitHubRepository(
     private val discussionsCache = LruMemoryCache<DiscussionsKey, DiscussionListData>(ttl = 60.seconds, maxEntries = 32)
     private val discussionDetailCache = LruMemoryCache<IssuePullKey, DiscussionDetail>(ttl = 45.seconds, maxEntries = 32)
     private val securityOverviewCache = LruMemoryCache<RepoKey, RepoSecurityOverview>(ttl = 90.seconds, maxEntries = 32)
+    private val insightsCache = LruMemoryCache<RepoKey, RepoInsightsData>(ttl = 120.seconds, maxEntries = 32)
     private val gistsCache = LruMemoryCache<String, List<GistSummary>>(ttl = 60.seconds, maxEntries = 16)
     private val gistDetailCache = LruMemoryCache<String, GistDetail>(ttl = 60.seconds, maxEntries = 32)
 
@@ -251,6 +256,7 @@ class GitHubRepository(
         discussionsCache.clear()
         discussionDetailCache.clear()
         securityOverviewCache.clear()
+        insightsCache.clear()
         gistsCache.clear()
         gistDetailCache.clear()
         recentIssueStateOverrides = emptyMap()
@@ -1682,5 +1688,67 @@ class GitHubRepository(
     }.onSuccess {
         gistsCache.clear()
         gistDetailCache.invalidate(gistId)
+    }
+
+    fun peekRepoInsights(owner: String, repo: String): RepoInsightsData? =
+        insightsCache.peek(RepoKey(owner, repo))
+
+    suspend fun getRepoInsights(
+        owner: String,
+        repo: String,
+        forceRefresh: Boolean = false
+    ): Result<RepoInsightsData> {
+        val cleanOwner = owner.trim().ifBlank { repo.substringBefore('/', "").trim() }
+        val cleanRepo = repo.substringAfterLast('/').trim()
+        val key = RepoKey(cleanOwner, cleanRepo)
+        if (!forceRefresh) {
+            insightsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            coroutineScope {
+                val langJob = async { runCatching { restService.fetchRepoLanguages(cleanOwner, cleanRepo) } }
+                val activityJob = async { runCatching { restService.fetchRepoCommitActivity(cleanOwner, cleanRepo) } }
+                val contribJob = async { runCatching { restService.fetchRepoContributorStats(cleanOwner, cleanRepo) } }
+
+                val langRes = langJob.await()
+                val actRes = activityJob.await()
+                val contribRes = contribJob.await()
+
+                val firstFatal = listOf(langRes, actRes, contribRes).firstOrNull { it.isFailure }?.exceptionOrNull()
+                if (langRes.isFailure && actRes.isFailure && contribRes.isFailure) {
+                    throw firstFatal ?: IllegalStateException("Failed to load repository insights")
+                }
+
+                val langMap = langRes.getOrElse { emptyMap() }
+                val (weekly, actComputing) = actRes.getOrElse { emptyList<WeeklyCommitActivity>() to false }
+                val (contributors, contribComputing) = contribRes.getOrElse { emptyList<ContributorStat>() to false }
+                val finalContributors = if (contributors.isEmpty() && contribComputing) {
+                    runCatching {
+                        restService.fetchRepoContributors(cleanOwner, cleanRepo, perPage = 10).map { user ->
+                            ContributorStat(
+                                login = user.login,
+                                avatarUrl = user.avatarUrl,
+                                htmlUrl = user.htmlUrl,
+                                totalCommits = 0
+                            )
+                        }
+                    }.getOrDefault(emptyList())
+                } else {
+                    contributors
+                }
+
+                RepoInsightsData(
+                    languages = computeLanguageShares(langMap),
+                    totalLanguageBytes = langMap.values.filter { it > 0L }.sum(),
+                    weeklyActivity = weekly,
+                    contributors = finalContributors,
+                    statsComputing = actComputing || contribComputing
+                )
+            }
+        }.onSuccess { data ->
+            if (!data.statsComputing) {
+                insightsCache.put(key, data)
+            }
+        }
     }
 }
