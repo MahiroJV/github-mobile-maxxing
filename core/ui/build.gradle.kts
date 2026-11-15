@@ -38,9 +38,13 @@ kotlin {
             api(libs.icons.lucide)
             api(libs.coil.compose)
             api(libs.coil.network.ktor3)
+            api(libs.coil.svg)
             api(libs.markdown.renderer)
             api(libs.markdown.renderer.m3)
             api(libs.markdown.renderer.coil3)
+        }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
         }
     }
 }

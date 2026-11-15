@@ -2004,7 +2004,14 @@ fun RepoDetailScreen(
                                     shape = MaterialTheme.shapes.large,
                                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
                                 ) {
-                                    GitHubMarkdown(file.content, modifier = Modifier.padding(16.dp))
+                                    GitHubMarkdown(
+                                        content = file.content,
+                                        repoOwner = repo.owner,
+                                        repoName = repo.name,
+                                        branchRef = currentRef,
+                                        documentPath = file.path,
+                                        modifier = Modifier.padding(16.dp)
+                                    )
                                 }
                             }
                             else -> {
@@ -2125,7 +2132,13 @@ fun RepoDetailScreen(
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(Modifier.height(10.dp))
-                                    GitHubMarkdown(readme!!)
+                                    GitHubMarkdown(
+                                        content = readme!!,
+                                        repoOwner = repo.owner,
+                                        repoName = repo.name,
+                                        branchRef = currentRef,
+                                        documentPath = "README.md"
+                                    )
                                 }
                             }
                         }

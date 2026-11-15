@@ -39,7 +39,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.memory.MemoryCache
+import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.crossfade
+import coil3.svg.SvgDecoder
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.plugin
+import io.ktor.http.HttpHeaders
 import com.composables.icons.lucide.FolderGit2
 import com.composables.icons.lucide.GitPullRequest
 import com.composables.icons.lucide.House
@@ -81,8 +87,33 @@ fun OctoExpressApp(
     onConsumeDeepLink: () -> Unit = {},
     onDarkThemeChanged: (Boolean) -> Unit = {}
 ) {
+    val container = remember { AppContainer() }
+
     setSingletonImageLoaderFactory { context ->
+        val imageHttpClient = HttpClient {
+            followRedirects = true
+        }.apply {
+            plugin(HttpSend).intercept { request ->
+                request.headers.append(HttpHeaders.UserAgent, "OctoExpress-KMP/1.0")
+                val host = request.url.host.lowercase()
+                val isGitHubOwned = host == "raw.githubusercontent.com" ||
+                    host == "github.com" ||
+                    host == "api.github.com"
+                if (isGitHubOwned) {
+                    container.sessionManager.session.value?.accessToken?.let { token ->
+                        if (!request.headers.contains(HttpHeaders.Authorization)) {
+                            request.headers.append(HttpHeaders.Authorization, "Bearer $token")
+                        }
+                    }
+                }
+                execute(request)
+            }
+        }
         ImageLoader.Builder(context)
+            .components {
+                add(SvgDecoder.Factory())
+                add(KtorNetworkFetcherFactory(httpClient = { imageHttpClient }))
+            }
             .memoryCache {
                 MemoryCache.Builder()
                     .maxSizePercent(context, 0.20)
@@ -91,8 +122,6 @@ fun OctoExpressApp(
             .crossfade(false)
             .build()
     }
-
-    val container = remember { AppContainer() }
     val isInitialized by container.sessionManager.isInitialized.collectAsState()
     val session by container.sessionManager.session.collectAsState()
     val themePrefs by container.sessionManager.themePreferences.collectAsState()
