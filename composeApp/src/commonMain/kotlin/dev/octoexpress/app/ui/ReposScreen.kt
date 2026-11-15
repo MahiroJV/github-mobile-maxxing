@@ -172,15 +172,14 @@ private enum class RepoListTab(val label: String) {
     SEARCH("Search")
 }
 
-private enum class RepoDetailTab(val label: String) {
+internal enum class RepoDetailTab(val label: String) {
     CODE("Code"),
-    COMMITS("Commits"),
+    ISSUES("Issues"),
+    PULLS("PRs"),
     ACTIONS("Actions"),
     RELEASES("Releases"),
     DISCUSSIONS("Discussions"),
-    SECURITY("Security"),
-    ISSUES("Issues"),
-    PULLS("PRs")
+    SECURITY("Security")
 }
 
 private val TRENDING_LANGUAGES = listOf("All", "Kotlin", "TypeScript", "Python", "Rust", "Go", "Swift")
@@ -1093,6 +1092,7 @@ fun RepoDetailScreen(
     }
     var forkBusy by remember(repo.fullName) { mutableStateOf(false) }
     var activeTab by remember(repo.fullName) { mutableStateOf(RepoDetailTab.CODE) }
+    var showCommitsView by remember(repo.fullName) { mutableStateOf(false) }
 
     var currentPath by remember(repo.fullName) { mutableStateOf("") }
     var entries by remember(repo.fullName) {
@@ -1521,11 +1521,12 @@ fun RepoDetailScreen(
                 openedDiscussionNumber = null
                 discussionDetail = null
             }
-            activeTab == RepoDetailTab.COMMITS && openedCommitSha != null -> {
+            activeTab == RepoDetailTab.CODE && openedCommitSha != null -> {
                 openedCommitSha = null
                 openedCommitDetail = null
             }
-            activeTab == RepoDetailTab.COMMITS && showCompareView -> showCompareView = false
+            activeTab == RepoDetailTab.CODE && showCompareView -> showCompareView = false
+            activeTab == RepoDetailTab.CODE && showCommitsView -> showCommitsView = false
             openedFile != null -> openedFile = null
             activeTab == RepoDetailTab.CODE && currentPath.isNotBlank() -> {
                 val parent = currentPath.substringBeforeLast('/', "")
@@ -1589,8 +1590,8 @@ fun RepoDetailScreen(
         }
     }
 
-    LaunchedEffect(activeTab, currentRef, repo.fullName) {
-        if (activeTab == RepoDetailTab.COMMITS && !showCompareView && openedCommitSha == null) {
+    LaunchedEffect(activeTab, currentRef, repo.fullName, showCommitsView, showCompareView, openedCommitSha) {
+        if (activeTab == RepoDetailTab.CODE && showCommitsView && !showCompareView && openedCommitSha == null) {
             loadCommits(currentRef, forceRefresh = false)
         }
         if (activeTab == RepoDetailTab.ACTIONS && openedRun == null) {
@@ -1844,7 +1845,7 @@ fun RepoDetailScreen(
                                 currentRef = selected
                                 openedCommitSha = null
                                 loadDirectory("", selected)
-                                if (activeTab == RepoDetailTab.COMMITS && !showCompareView) {
+                                if (activeTab == RepoDetailTab.CODE && showCommitsView && !showCompareView) {
                                     loadCommits(selected, forceRefresh = false)
                                 }
                                 scope.launch {
@@ -1883,8 +1884,9 @@ fun RepoDetailScreen(
                         shape = RoundedCornerShape(10.dp),
                         onClick = {
                             openedCommitSha = null
+                            showCommitsView = true
                             showCompareView = true
-                            activeTab = RepoDetailTab.COMMITS
+                            activeTab = RepoDetailTab.CODE
                             val branches = detail?.branches.orEmpty()
                             val base = detail?.summary?.defaultBranch ?: repo.defaultBranch
                             val head = if (currentRef != base) currentRef else {
@@ -1912,20 +1914,24 @@ fun RepoDetailScreen(
                     RepoDetailTab.entries.forEach { tab ->
                         val icon = when (tab) {
                             RepoDetailTab.CODE -> Lucide.Folder
-                            RepoDetailTab.COMMITS -> Lucide.GitCommitHorizontal
+                            RepoDetailTab.ISSUES -> Lucide.CircleDot
+                            RepoDetailTab.PULLS -> Lucide.GitPullRequest
                             RepoDetailTab.ACTIONS -> Lucide.Play
                             RepoDetailTab.RELEASES -> Lucide.Tag
                             RepoDetailTab.DISCUSSIONS -> Lucide.MessageSquare
                             RepoDetailTab.SECURITY -> Lucide.ShieldCheck
-                            RepoDetailTab.ISSUES -> Lucide.CircleDot
-                            RepoDetailTab.PULLS -> Lucide.GitPullRequest
                         }
                         val selected = activeTab == tab
                         Tab(
                             selected = selected,
                             onClick = {
                                 activeTab = tab
-                                if (tab != RepoDetailTab.COMMITS) {
+                                if (tab != RepoDetailTab.CODE) {
+                                    showCommitsView = false
+                                    showCompareView = false
+                                    openedCommitSha = null
+                                } else {
+                                    showCommitsView = false
                                     showCompareView = false
                                     openedCommitSha = null
                                 }
@@ -1961,7 +1967,83 @@ fun RepoDetailScreen(
 
         when (activeTab) {
             RepoDetailTab.CODE -> {
-                if (openedFile != null) {
+                if (showCommitsView || showCompareView || openedCommitSha != null) {
+                    val allRefs = remember(detail?.branches, repoTags, currentRef, repo.defaultBranch) {
+                        buildList {
+                            addAll(detail?.branches.orEmpty().map { it.name })
+                            addAll(repoTags.map { it.name })
+                            add(currentRef)
+                            add(repo.defaultBranch)
+                        }.distinct()
+                    }
+                    val avatarResolver: (CommitSummary) -> String = { commit ->
+                        resolveCommitAuthorAvatarUrl(
+                            commit = commit,
+                            repoOwner = repo.owner,
+                            repoOwnerAvatarUrl = detail?.summary?.ownerAvatarUrl?.ifBlank { repo.ownerAvatarUrl } ?: repo.ownerAvatarUrl,
+                            viewerLogin = viewerProfile?.login,
+                            viewerName = viewerProfile?.name,
+                            viewerAvatarUrl = viewerProfile?.avatarUrl
+                        )
+                    }
+                    when {
+                        openedCommitSha != null -> {
+                            RepoCommitDetailView(
+                                sha = openedCommitSha!!,
+                                detail = openedCommitDetail,
+                                isLoading = commitDetailLoading,
+                                commitAvatarResolver = avatarResolver,
+                                onBack = {
+                                    openedCommitSha = null
+                                    openedCommitDetail = null
+                                },
+                                onOpenParent = { parentSha -> openCommit(parentSha) },
+                                onOpenUser = onOpenUser
+                            )
+                        }
+                        showCompareView -> {
+                            RepoBranchCompareView(
+                                availableRefs = allRefs,
+                                baseRef = compareBase,
+                                headRef = compareHead,
+                                result = compareResult,
+                                isLoading = compareLoading,
+                                errorMsg = compareError,
+                                commitAvatarResolver = avatarResolver,
+                                onSelectBase = { base -> compareBase = base; runCompare(base, compareHead) },
+                                onSelectHead = { head -> compareHead = head; runCompare(compareBase, head) },
+                                onSwapRefs = {
+                                    val nextBase = compareHead
+                                    val nextHead = compareBase
+                                    compareBase = nextBase
+                                    compareHead = nextHead
+                                    runCompare(nextBase, nextHead)
+                                },
+                                onRefresh = { runCompare(compareBase, compareHead, forceRefresh = true) },
+                                onBackToCommits = { showCompareView = false },
+                                onOpenCommit = { sha -> openCommit(sha) },
+                                onOpenUser = onOpenUser
+                            )
+                        }
+                        else -> {
+                            RepoCommitsTabContent(
+                                currentRef = currentRef,
+                                commits = repoCommits,
+                                isLoading = commitsLoading,
+                                errorMsg = commitsError,
+                                commitAvatarResolver = avatarResolver,
+                                onBackToCode = { showCommitsView = false },
+                                onRefresh = { loadCommits(currentRef, forceRefresh = true) },
+                                onOpenCompare = {
+                                    showCompareView = true
+                                    runCompare(compareBase, compareHead)
+                                },
+                                onOpenCommit = { commit -> openCommit(commit.sha) },
+                                onOpenUser = onOpenUser
+                            )
+                        }
+                    }
+                } else if (openedFile != null) {
                     val file = openedFile!!
                     Column(
                         modifier = Modifier
@@ -2077,16 +2159,35 @@ fun RepoDetailScreen(
                                     }
                                 }
                             }
-                            FilledTonalButton(
-                                onClick = {
-                                    editingExistingFile = null
-                                    fileMutationError = null
-                                    showFileEditorDialog = true
-                                }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("File")
+                                OutlinedButton(
+                                    onClick = {
+                                        openedCommitSha = null
+                                        showCompareView = false
+                                        showCommitsView = true
+                                        loadCommits(currentRef, forceRefresh = false)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Lucide.GitCommitHorizontal, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Commits", maxLines = 1, softWrap = false)
+                                }
+                                FilledTonalButton(
+                                    onClick = {
+                                        editingExistingFile = null
+                                        fileMutationError = null
+                                        showFileEditorDialog = true
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("File", maxLines = 1, softWrap = false)
+                                }
                             }
                         }
 
@@ -2165,83 +2266,6 @@ fun RepoDetailScreen(
                                 }
                             }
                         }
-                    }
-                }
-            }
-
-            RepoDetailTab.COMMITS -> {
-                val allRefs = remember(detail?.branches, repoTags, currentRef, repo.defaultBranch) {
-                    buildList {
-                        addAll(detail?.branches.orEmpty().map { it.name })
-                        addAll(repoTags.map { it.name })
-                        add(currentRef)
-                        add(repo.defaultBranch)
-                    }.distinct()
-                }
-                val avatarResolver: (CommitSummary) -> String = { commit ->
-                    resolveCommitAuthorAvatarUrl(
-                        commit = commit,
-                        repoOwner = repo.owner,
-                        repoOwnerAvatarUrl = detail?.summary?.ownerAvatarUrl?.ifBlank { repo.ownerAvatarUrl } ?: repo.ownerAvatarUrl,
-                        viewerLogin = viewerProfile?.login,
-                        viewerName = viewerProfile?.name,
-                        viewerAvatarUrl = viewerProfile?.avatarUrl
-                    )
-                }
-                when {
-                    openedCommitSha != null -> {
-                        RepoCommitDetailView(
-                            sha = openedCommitSha!!,
-                            detail = openedCommitDetail,
-                            isLoading = commitDetailLoading,
-                            commitAvatarResolver = avatarResolver,
-                            onBack = {
-                                openedCommitSha = null
-                                openedCommitDetail = null
-                            },
-                            onOpenParent = { parentSha -> openCommit(parentSha) },
-                            onOpenUser = onOpenUser
-                        )
-                    }
-                    showCompareView -> {
-                        RepoBranchCompareView(
-                            availableRefs = allRefs,
-                            baseRef = compareBase,
-                            headRef = compareHead,
-                            result = compareResult,
-                            isLoading = compareLoading,
-                            errorMsg = compareError,
-                            commitAvatarResolver = avatarResolver,
-                            onSelectBase = { base -> compareBase = base; runCompare(base, compareHead) },
-                            onSelectHead = { head -> compareHead = head; runCompare(compareBase, head) },
-                            onSwapRefs = {
-                                val nextBase = compareHead
-                                val nextHead = compareBase
-                                compareBase = nextBase
-                                compareHead = nextHead
-                                runCompare(nextBase, nextHead)
-                            },
-                            onRefresh = { runCompare(compareBase, compareHead, forceRefresh = true) },
-                            onBackToCommits = { showCompareView = false },
-                            onOpenCommit = { sha -> openCommit(sha) },
-                            onOpenUser = onOpenUser
-                        )
-                    }
-                    else -> {
-                        RepoCommitsTabContent(
-                            currentRef = currentRef,
-                            commits = repoCommits,
-                            isLoading = commitsLoading,
-                            errorMsg = commitsError,
-                            commitAvatarResolver = avatarResolver,
-                            onRefresh = { loadCommits(currentRef, forceRefresh = true) },
-                            onOpenCompare = {
-                                showCompareView = true
-                                runCompare(compareBase, compareHead)
-                            },
-                            onOpenCommit = { commit -> openCommit(commit.sha) },
-                            onOpenUser = onOpenUser
-                        )
                     }
                 }
             }
@@ -2333,6 +2357,9 @@ fun RepoDetailScreen(
                         currentRef = tag.name
                         currentPath = ""
                         openedFile = null
+                        showCommitsView = false
+                        showCompareView = false
+                        openedCommitSha = null
                         activeTab = RepoDetailTab.CODE
                         loadDirectory("", tag.name)
                     }
@@ -3070,6 +3097,7 @@ private fun RepoCommitsTabContent(
     isLoading: Boolean,
     errorMsg: String?,
     commitAvatarResolver: (CommitSummary) -> String = { it.authorAvatarUrl },
+    onBackToCode: () -> Unit,
     onRefresh: () -> Unit,
     onOpenCompare: () -> Unit,
     onOpenCommit: (CommitSummary) -> Unit,
@@ -3083,6 +3111,14 @@ private fun RepoCommitsTabContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            FilledTonalButton(
+                onClick = onBackToCode,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Icon(Lucide.ArrowLeft, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Code", maxLines = 1, softWrap = false)
+            }
             ExpressiveStatusPill(
                 label = currentRef,
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
