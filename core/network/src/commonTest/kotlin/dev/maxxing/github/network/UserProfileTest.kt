@@ -196,4 +196,32 @@ class UserProfileTest {
         assertEquals("bob", repo.getUserFollowers("alice").getOrThrow()[0].login)
         assertEquals("carol", repo.getUserFollowing("alice").getOrThrow()[0].login)
     }
+
+    @Test
+    fun followNormalizesAtPrefixAnd404SurfacesScopeGuidance() = runTest {
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/user/following/alice" -> respond("", HttpStatusCode.NoContent)
+                "/user/following/bob" -> respond(
+                    content = """{"message":"Not Found"}""",
+                    status = HttpStatusCode.NotFound,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                else -> error("Unexpected path: ${request.url.encodedPath}")
+            }
+        }
+        val sessionManager = SessionManager(
+            tokenStore = ProfileTestTokenStore(),
+            deviceFlowClient = DeviceFlowClient(HttpClient(engine))
+        )
+        sessionManager.initialize()
+        val repo = GitHubRepository(sessionManager, httpClient = createClient(engine))
+
+        repo.setFollowingUser(" @alice ", true).getOrThrow()
+
+        val failure = repo.setFollowingUser("@bob", true).exceptionOrNull()
+        assertTrue(failure is GitHubApiException)
+        assertEquals(404, failure.statusCode)
+        assertTrue(failure.message.contains("user:follow"))
+    }
 }

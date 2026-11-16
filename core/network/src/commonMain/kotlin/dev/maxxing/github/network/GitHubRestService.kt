@@ -1702,13 +1702,15 @@ class GitHubRestService(
     }
 
     suspend fun checkViewerFollowing(login: String): Boolean {
-        val encodedLogin = login.trim().encodeURLPathPart()
+        val cleanLogin = login.trim().removePrefix("@")
+        val encodedLogin = cleanLogin.encodeURLPathPart()
         val res = httpClient.get("$baseUrl/user/following/$encodedLogin")
         return res.status.value == 204
     }
 
     suspend fun setFollowingUser(login: String, follow: Boolean) {
-        val encodedLogin = login.trim().encodeURLPathPart()
+        val cleanLogin = login.trim().removePrefix("@")
+        val encodedLogin = cleanLogin.encodeURLPathPart()
         val url = "$baseUrl/user/following/$encodedLogin"
         val res = if (follow) {
             httpClient.put(url) {
@@ -1718,7 +1720,13 @@ class GitHubRestService(
             httpClient.delete(url)
         }
         if (!res.status.isSuccess()) {
-            throw GitHubApiException(res.status.value, "Failed to update follow state (${res.status.value})")
+            val action = if (follow) "follow" else "unfollow"
+            val msg = if (res.status.value == 404) {
+                "Failed to $action @$cleanLogin (404). Your token may lack the 'user:follow' scope — sign out and sign in again (or add 'user:follow' scope)."
+            } else {
+                "Failed to update follow state (${res.status.value})"
+            }
+            throw GitHubApiException(res.status.value, msg)
         }
     }
 

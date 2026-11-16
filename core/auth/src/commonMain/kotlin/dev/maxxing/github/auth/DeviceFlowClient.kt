@@ -242,7 +242,7 @@ class DeviceFlowClient(
     }
 
     companion object {
-        const val DEFAULT_OAUTH_SCOPE = "repo gist notifications read:user read:org"
+        const val DEFAULT_OAUTH_SCOPE = "repo gist notifications read:user user:follow read:org"
 
         fun defaultAuthHttpClient(): HttpClient = HttpClient {
             install(ContentNegotiation) {

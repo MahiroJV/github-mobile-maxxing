@@ -73,8 +73,11 @@ class DeviceFlowClientTest {
         val states = client.startDeviceFlow("Ov23liTestClient").toList()
 
         assertIs<DeviceCodeState.RequestingCode>(states[0])
-        assertTrue(requestedDeviceScope?.split(' ')?.contains("gist") == true)
-        assertTrue(DeviceFlowClient.DEFAULT_OAUTH_SCOPE.split(' ').contains("gist"))
+        val sentScopes = requestedDeviceScope?.split(' ').orEmpty()
+        assertTrue("gist" in sentScopes)
+        assertTrue("user:follow" in sentScopes)
+        assertTrue("gist" in DeviceFlowClient.DEFAULT_OAUTH_SCOPE.split(' '))
+        assertTrue("user:follow" in DeviceFlowClient.DEFAULT_OAUTH_SCOPE.split(' '))
         val firstAwait = assertIs<DeviceCodeState.AwaitingUser>(states[1])
         assertEquals("ABCD-EFGH", firstAwait.userCode)
         assertEquals(listOf(5000L, 5000L, 10000L), recordedDelays)
