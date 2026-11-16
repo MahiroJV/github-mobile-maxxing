@@ -1,11 +1,11 @@
 # kotlinx.serialization
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.SerializationKt
--keep,includedescriptorclasses class dev.octoexpress.**$$serializer { *; }
--keepclassmembers class dev.octoexpress.** {
+-keep,includedescriptorclasses class dev.maxxing.github.**$$serializer { *; }
+-keepclassmembers class dev.maxxing.github.** {
     *** Companion;
 }
--keepclasseswithmembers class dev.octoexpress.** {
+-keepclasseswithmembers class dev.maxxing.github.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
 
@@ -17,5 +17,5 @@
 -keepclassmembers class * implements android.content.BroadcastReceiver {
     public <init>(...);
 }
--keep class dev.octoexpress.app.notifications.NotificationSyncWorker { *; }
--keep class dev.octoexpress.app.notifications.NotificationActionReceiver { *; }
+-keep class dev.maxxing.github.app.notifications.NotificationSyncWorker { *; }
+-keep class dev.maxxing.github.app.notifications.NotificationActionReceiver { *; }

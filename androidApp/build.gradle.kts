@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.octoexpress.app"
+    namespace = "dev.maxxing.github.app"
     compileSdk {
         version = release(37) {
             minorApiLevel = 2
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.octoexpress.app"
+        applicationId = "dev.maxxing.github.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1

@@ -6,7 +6,7 @@ plugins {
 
 kotlin {
     androidLibrary {
-        namespace = "dev.octoexpress.core.model"
+        namespace = "dev.maxxing.github.core.model"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
     }

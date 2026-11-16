@@ -6,7 +6,7 @@ plugins {
 
 kotlin {
     androidLibrary {
-        namespace = "dev.octoexpress.core.auth"
+        namespace = "dev.maxxing.github.core.auth"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
     }

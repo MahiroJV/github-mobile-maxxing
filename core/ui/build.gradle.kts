@@ -7,7 +7,7 @@ plugins {
 
 kotlin {
     androidLibrary {
-        namespace = "dev.octoexpress.core.ui"
+        namespace = "dev.maxxing.github.core.ui"
         compileSdk {
             version = release(37) {
                 minorApiLevel = 2

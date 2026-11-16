@@ -17,18 +17,18 @@ val localProps = Properties().apply {
 val defaultGitHubClientId: String = localProps.getProperty("github.client.id", "")
     .replace("\"", "")
 
-val generateOctoConfig by tasks.registering {
-    val outDir = layout.buildDirectory.dir("generated/octoConfig/kotlin")
+val generateMaxxingConfig by tasks.registering {
+    val outDir = layout.buildDirectory.dir("generated/maxxingConfig/kotlin")
     inputs.property("clientId", defaultGitHubClientId)
     outputs.dir(outDir)
     doLast {
-        val dir = outDir.get().asFile.resolve("dev/octoexpress/app")
+        val dir = outDir.get().asFile.resolve("dev/maxxing/github/app")
         dir.mkdirs()
-        dir.resolve("OctoBuildConfig.kt").writeText(
+        dir.resolve("MaxxingBuildConfig.kt").writeText(
             """
-            package dev.octoexpress.app
+            package dev.maxxing.github.app
 
-            internal object OctoBuildConfig {
+            internal object MaxxingBuildConfig {
                 const val DEFAULT_GITHUB_CLIENT_ID: String = "$defaultGitHubClientId"
             }
             """.trimIndent()
@@ -38,7 +38,7 @@ val generateOctoConfig by tasks.registering {
 
 kotlin {
     androidLibrary {
-        namespace = "dev.octoexpress.app.shared"
+        namespace = "dev.maxxing.github.app.shared"
         compileSdk {
             version = release(37) {
                 minorApiLevel = 2
@@ -55,7 +55,7 @@ kotlin {
 
     sourceSets {
         val commonMain by getting {
-            kotlin.srcDir(generateOctoConfig.map { layout.buildDirectory.dir("generated/octoConfig/kotlin") })
+            kotlin.srcDir(generateMaxxingConfig.map { layout.buildDirectory.dir("generated/maxxingConfig/kotlin") })
             dependencies {
                 implementation(projects.core.model)
                 api(projects.core.auth)
@@ -84,12 +84,12 @@ kotlin {
 }
 
 compose.resources {
-    packageOfResClass = "dev.octoexpress.app.resources"
+    packageOfResClass = "dev.maxxing.github.app.resources"
 }
 
 compose.desktop {
     application {
-        mainClass = "dev.octoexpress.app.MainKt"
+        mainClass = "dev.maxxing.github.app.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "github-mobile-maxxing"
