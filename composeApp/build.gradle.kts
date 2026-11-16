@@ -45,6 +45,9 @@ kotlin {
             }
         }
         minSdk = libs.versions.android.minSdk.get().toInt()
+        androidResources {
+            enable = true
+        }
     }
 
     jvm("desktop") {
@@ -95,6 +98,7 @@ compose.desktop {
             packageName = "github-mobile-maxxing"
             packageVersion = "1.0.0"
             description = "Fast Material 3 Expressive GitHub Client"
+            modules("java.instrument", "java.management", "jdk.unsupported", "jdk.crypto.ec")
             linux {
                 packageName = "github-mobile-maxxing"
                 iconFile.set(project.file("src/desktopMain/resources/app-icon.png"))

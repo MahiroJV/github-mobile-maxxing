@@ -49,6 +49,9 @@ jobs:
       - name: Build Android Release APK
         run: ./gradlew :androidApp:assembleRelease --no-daemon
 
+      - name: Verify Compose resources bundled in APK
+        run: unzip -l androidApp/build/outputs/apk/release/androidApp-release.apk | grep -q "assets/composeResources/.*/app_icon.png"
+
       - name: Upload Desktop test results
         if: always()
         uses: actions/upload-artifact@v4
