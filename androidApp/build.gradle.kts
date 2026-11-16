@@ -1,7 +1,52 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeCompiler)
 }
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) {
+        f.inputStream().use { load(it) }
+    }
+}
+
+fun resolveSetting(envName: String, propName: String): String? =
+    System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: localProps.getProperty(propName)?.takeIf { it.isNotBlank() }
+
+fun resolveGitCommitCount(): Int = runCatching {
+    val proc = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    val count = proc.inputStream.bufferedReader().readText().trim().toIntOrNull()
+    proc.waitFor()
+    count
+}.getOrNull() ?: 1
+
+val resolvedVersionCode: Int =
+    System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull()
+        ?: (resolveGitCommitCount() + 100)
+
+val resolvedVersionName: String =
+    System.getenv("ANDROID_VERSION_NAME")?.takeIf { it.isNotBlank() }
+        ?: "1.0.${resolveGitCommitCount()}"
+
+val resolvedKeystorePath = resolveSetting("ANDROID_KEYSTORE_PATH", "android.keystore.path")
+val resolvedKeystorePassword = resolveSetting("ANDROID_KEYSTORE_PASSWORD", "android.keystore.password")
+val resolvedKeyAlias = resolveSetting("ANDROID_KEY_ALIAS", "android.key.alias")
+val resolvedKeyPassword = resolveSetting("ANDROID_KEY_PASSWORD", "android.key.password")
+val resolvedStoreFile: File? = resolvedKeystorePath?.let { path ->
+    val direct = File(path)
+    if (direct.isAbsolute && direct.exists()) direct else rootProject.file(path).takeIf { it.exists() }
+}
+val hasReleaseKeystore = resolvedStoreFile != null &&
+    !resolvedKeystorePassword.isNullOrBlank() &&
+    !resolvedKeyAlias.isNullOrBlank() &&
+    !resolvedKeyPassword.isNullOrBlank()
 
 android {
     namespace = "dev.maxxing.github.app"
@@ -15,8 +60,19 @@ android {
         applicationId = "dev.maxxing.github.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = resolvedVersionCode
+        versionName = resolvedVersionName
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = resolvedStoreFile
+                storePassword = resolvedKeystorePassword
+                keyAlias = resolvedKeyAlias
+                keyPassword = resolvedKeyPassword
+            }
+        }
     }
 
     packaging {
@@ -29,7 +85,11 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
