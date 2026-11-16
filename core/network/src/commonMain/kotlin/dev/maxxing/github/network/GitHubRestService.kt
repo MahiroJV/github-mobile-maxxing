@@ -1019,7 +1019,21 @@ class GitHubRestService(
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to load check runs (${res.status.value})")
         }
-        return res.body<RestCheckRunsResponse>().checkRuns.map { cr ->
+        return res.body<RestCheckRunsResponse>().toCheckRunSummaries()
+    }
+
+    suspend fun fetchCheckRunsForCheckSuite(owner: String, repo: String, checkSuiteId: Long): List<CheckRunSummary> {
+        val res = httpClient.get("$baseUrl/repos/$owner/$repo/check-suites/$checkSuiteId/check-runs") {
+            parameter("per_page", 50)
+        }
+        if (!res.status.isSuccess()) {
+            throw GitHubApiException(res.status.value, "Failed to load check suite runs (${res.status.value})")
+        }
+        return res.body<RestCheckRunsResponse>().toCheckRunSummaries()
+    }
+
+    private fun RestCheckRunsResponse.toCheckRunSummaries(): List<CheckRunSummary> =
+        checkRuns.map { cr ->
             CheckRunSummary(
                 id = cr.id,
                 name = cr.name,
@@ -1031,7 +1045,6 @@ class GitHubRestService(
                 detailsUrl = cr.detailsUrl?.ifBlank { cr.htmlUrl } ?: cr.htmlUrl
             )
         }
-    }
 
     suspend fun fetchReleases(owner: String, repo: String, perPage: Int = 20): List<ReleaseSummary> {
         val res = httpClient.get("$baseUrl/repos/$owner/$repo/releases") {

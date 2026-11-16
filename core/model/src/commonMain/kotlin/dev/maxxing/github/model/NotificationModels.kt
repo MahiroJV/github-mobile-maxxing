@@ -47,5 +47,37 @@ data class NotificationThread(
     val isPrivate: Boolean = false
 ) {
     val subjectNumber: Int?
-        get() = subjectUrl?.substringAfterLast('/')?.toIntOrNull()
+        get() = if (subjectType == NotificationSubjectType.ISSUE || subjectType == NotificationSubjectType.PULL_REQUEST) {
+            subjectUrl?.substringAfterLast('/')?.toIntOrNull()
+        } else {
+            null
+        }
+
+    val checkSuiteId: Long?
+        get() = if (subjectType == NotificationSubjectType.CHECK_SUITE) {
+            subjectUrl?.substringAfterLast('/')?.toLongOrNull()
+        } else {
+            null
+        }
+
+    val commitSha: String?
+        get() = if (subjectType == NotificationSubjectType.COMMIT) {
+            subjectUrl?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+
+    val htmlFallbackUrl: String
+        get() = when (subjectType) {
+            NotificationSubjectType.ISSUE -> subjectNumber?.let { "https://github.com/$repoFullName/issues/$it" }
+                ?: "https://github.com/$repoFullName/issues"
+            NotificationSubjectType.PULL_REQUEST -> subjectNumber?.let { "https://github.com/$repoFullName/pull/$it" }
+                ?: "https://github.com/$repoFullName/pulls"
+            NotificationSubjectType.CHECK_SUITE -> "https://github.com/$repoFullName/actions"
+            NotificationSubjectType.COMMIT -> commitSha?.let { "https://github.com/$repoFullName/commit/$it" }
+                ?: "https://github.com/$repoFullName/commits"
+            NotificationSubjectType.RELEASE -> "https://github.com/$repoFullName/releases"
+            NotificationSubjectType.DISCUSSION -> "https://github.com/$repoFullName/discussions"
+            NotificationSubjectType.UNKNOWN -> "https://github.com/$repoFullName"
+        }
 }

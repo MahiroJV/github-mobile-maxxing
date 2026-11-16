@@ -119,8 +119,27 @@ fun NotificationsScreen(
     onConsumeDeepLink: () -> Unit = {},
     onMessage: (String) -> Unit
 ) {
-    val navigator = rememberListDetailPaneScaffoldNavigator<IssuePullTarget>()
+    val navigator = rememberListDetailPaneScaffoldNavigator<String>()
     val scope = rememberCoroutineScope()
+
+    var selectedIssueTargets by remember { mutableStateOf<Map<String, IssuePullTarget>>(emptyMap()) }
+    var selectedThreads by remember { mutableStateOf<Map<String, NotificationThread>>(emptyMap()) }
+
+    fun openIssueDetail(target: IssuePullTarget) {
+        val key = "issue:${target.owner}/${target.repo}#${target.number}"
+        selectedIssueTargets = selectedIssueTargets + (key to target)
+        scope.launch {
+            navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
+        }
+    }
+
+    fun openThreadSubjectDetail(thread: NotificationThread) {
+        val key = "thread:${thread.id}"
+        selectedThreads = selectedThreads + (key to thread)
+        scope.launch {
+            navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
+        }
+    }
 
     var filter by remember { mutableStateOf(InboxFilter.UNREAD) }
     var reasonFilter by remember { mutableStateOf(ReasonFilter.ALL) }
@@ -148,7 +167,7 @@ fun NotificationsScreen(
 
     LaunchedEffect(deepLinkTarget) {
         if (deepLinkTarget != null) {
-            navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, deepLinkTarget)
+            openIssueDetail(deepLinkTarget)
             onConsumeDeepLink()
         }
     }
@@ -546,38 +565,43 @@ fun NotificationsScreen(
                                                 }
                                             }
                                         ) {
+                                            val currentKey = navigator.currentDestination?.contentKey
+                                            val isSelected = when {
+                                                currentKey == "thread:${thread.id}" -> true
+                                                currentKey != null && currentKey.startsWith("issue:") -> {
+                                                    selectedIssueTargets[currentKey]?.let {
+                                                        it.owner == thread.repoOwner &&
+                                                            it.repo == thread.repoName &&
+                                                            it.number == thread.subjectNumber
+                                                    } == true
+                                                }
+                                                else -> false
+                                            }
                                             NotificationThreadCard(
                                                 thread = thread,
-                                                selected = navigator.currentDestination?.contentKey?.let {
-                                                    it.owner == thread.repoOwner &&
-                                                        it.repo == thread.repoName &&
-                                                        it.number == thread.subjectNumber
-                                                } == true,
+                                                selected = isSelected,
                                                 onClick = {
+                                                    if (thread.unread) {
+                                                        threads = threads.map {
+                                                            if (it.id == thread.id) it.copy(unread = false) else it
+                                                        }
+                                                        container.updateUnreadCount(threads.count { it.unread })
+                                                        scope.launch {
+                                                            container.repository.markNotificationRead(thread.id)
+                                                        }
+                                                    }
                                                     val num = thread.subjectNumber
                                                     if (num != null && (thread.subjectType == NotificationSubjectType.ISSUE || thread.subjectType == NotificationSubjectType.PULL_REQUEST)) {
-                                                        if (thread.unread) {
-                                                            threads = threads.map {
-                                                                if (it.id == thread.id) it.copy(unread = false) else it
-                                                            }
-                                                            container.updateUnreadCount(threads.count { it.unread })
-                                                            scope.launch {
-                                                                container.repository.markNotificationRead(thread.id)
-                                                            }
-                                                        }
-                                                        scope.launch {
-                                                            navigator.navigateTo(
-                                                                ListDetailPaneScaffoldRole.Detail,
-                                                                IssuePullTarget(
-                                                                    owner = thread.repoOwner,
-                                                                    repo = thread.repoName,
-                                                                    number = num,
-                                                                    hintTitle = thread.subjectTitle
-                                                                )
+                                                        openIssueDetail(
+                                                            IssuePullTarget(
+                                                                owner = thread.repoOwner,
+                                                                repo = thread.repoName,
+                                                                number = num,
+                                                                hintTitle = thread.subjectTitle
                                                             )
-                                                        }
+                                                        )
                                                     } else {
-                                                        onMessage("Subject type ${thread.subjectType} preview isn't inline yet.")
+                                                        openThreadSubjectDetail(thread)
                                                     }
                                                 },
                                                 onMarkDone = {
@@ -628,33 +652,49 @@ fun NotificationsScreen(
         },
         detailPane = {
             AnimatedPane {
-                val target = navigator.currentDestination?.contentKey
-                if (target != null) {
-                    IssuePullDetailPane(
-                        target = target,
-                        container = container,
-                        showBackButton = navigator.canNavigateBack(),
-                        onBack = { scope.launch { navigator.navigateBack() } },
-                        onMessage = onMessage
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                Lucide.BellOff,
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            Text(
-                                text = "Select a notification to triage",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                val contentKey = navigator.currentDestination?.contentKey
+                val issueTarget = contentKey?.let { selectedIssueTargets[it] }
+                val threadTarget = contentKey?.removePrefix("thread:")?.takeIf { contentKey.startsWith("thread:") }?.let { tid ->
+                    threads.firstOrNull { it.id == tid } ?: selectedThreads[contentKey]
+                }
+                when {
+                    issueTarget != null -> {
+                        IssuePullDetailPane(
+                            target = issueTarget,
+                            container = container,
+                            showBackButton = navigator.canNavigateBack(),
+                            onBack = { scope.launch { navigator.navigateBack() } },
+                            onMessage = onMessage
+                        )
+                    }
+                    threadTarget != null -> {
+                        NotificationSubjectDetailPane(
+                            thread = threadTarget,
+                            container = container,
+                            showBackButton = navigator.canNavigateBack(),
+                            onBack = { scope.launch { navigator.navigateBack() } },
+                            onMessage = onMessage
+                        )
+                    }
+                    else -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Lucide.BellOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "Select a notification to triage",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -675,6 +715,8 @@ private fun NotificationThreadCard(
         NotificationSubjectType.PULL_REQUEST -> Lucide.GitPullRequest
         NotificationSubjectType.ISSUE -> Lucide.CircleDot
         NotificationSubjectType.RELEASE -> Lucide.Tag
+        NotificationSubjectType.CHECK_SUITE -> Lucide.Activity
+        NotificationSubjectType.DISCUSSION -> Lucide.MessageSquare
         else -> Lucide.GitCommitHorizontal
     }
 

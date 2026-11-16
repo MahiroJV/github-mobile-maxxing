@@ -3806,7 +3806,7 @@ private fun RefSelectorDropdown(
 }
 
 @Composable
-private fun actionStatusVisual(status: String, conclusion: String?): Pair<ImageVector, Color> {
+internal fun actionStatusVisual(status: String, conclusion: String?): Pair<ImageVector, Color> {
     return when {
         status != "completed" -> Lucide.Clock to Color(0xFFD97706)
         conclusion == "success" -> Lucide.CircleCheck to Color(0xFF16A34A)
@@ -3923,7 +3923,7 @@ private fun RepoActionsTabContent(
 }
 
 @Composable
-private fun WorkflowRunSummaryCard(
+internal fun WorkflowRunSummaryCard(
     run: WorkflowRunSummary,
     onClick: () -> Unit
 ) {
@@ -3981,7 +3981,7 @@ private fun WorkflowRunSummaryCard(
 }
 
 @Composable
-private fun WorkflowRunDetailView(
+internal fun WorkflowRunDetailView(
     run: WorkflowRunSummary,
     jobs: List<WorkflowJobSummary>?,
     isLoading: Boolean,
@@ -4118,7 +4118,7 @@ private fun WorkflowRunDetailView(
 }
 
 @Composable
-private fun WorkflowLogViewer(
+internal fun WorkflowLogViewer(
     job: WorkflowJobSummary,
     logs: String?,
     isLoading: Boolean,

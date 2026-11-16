@@ -6,6 +6,9 @@ import dev.maxxing.github.auth.SessionManager
 import dev.maxxing.github.auth.ThemePreferences
 import dev.maxxing.github.auth.TokenStore
 import dev.maxxing.github.model.AuthSession
+import dev.maxxing.github.model.NotificationReason
+import dev.maxxing.github.model.NotificationSubjectType
+import dev.maxxing.github.model.NotificationThread
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -161,6 +164,26 @@ class ActionsAndChecksTest {
                     headers = headersOf(HttpHeaders.ContentType, "application/json")
                 )
 
+                path == "/repos/octocat/app/check-suites/999/check-runs" && request.method == HttpMethod.Get -> respond(
+                    content = """
+                        {
+                          "check_runs": [
+                            {
+                              "id": 88,
+                              "name": "Desktop Tests & Android Release APK",
+                              "status": "completed",
+                              "conclusion": "failure",
+                              "app": { "name": "GitHub Actions" },
+                              "output": { "title": "CI failed" },
+                              "details_url": "https://github.com/octocat/app/runs/88"
+                            }
+                          ]
+                        }
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+
                 else -> error("Unexpected request: ${request.method} $path")
             }
         }
@@ -200,5 +223,47 @@ class ActionsAndChecksTest {
         assertEquals(1, checks.size)
         assertEquals("success", checks[0].conclusion)
         assertEquals("GitHub Actions", checks[0].appName)
+
+        val suiteChecks = repo.getCheckRunsForCheckSuite("octocat", "app", 999L).getOrThrow()
+        assertEquals(1, suiteChecks.size)
+        assertEquals("failure", suiteChecks[0].conclusion)
+        assertEquals("Desktop Tests & Android Release APK", suiteChecks[0].name)
+    }
+
+    @Test
+    fun checkSuiteAndCommitNotificationsDoNotMasqueradeAsIssueNumbers() {
+        val checkSuiteThread = NotificationThread(
+            id = "t_cs",
+            unread = true,
+            reason = NotificationReason.CI_ACTIVITY,
+            updatedAt = "2026-11-16T00:00:00Z",
+            subjectTitle = "CI workflow run failed",
+            subjectType = NotificationSubjectType.CHECK_SUITE,
+            subjectUrl = "https://api.github.com/repos/octocat/app/check-suites/999",
+            latestCommentUrl = null,
+            repoFullName = "octocat/app",
+            repoOwner = "octocat",
+            repoName = "app"
+        )
+        assertNull(checkSuiteThread.subjectNumber)
+        assertEquals(999L, checkSuiteThread.checkSuiteId)
+        assertEquals("https://github.com/octocat/app/actions", checkSuiteThread.htmlFallbackUrl)
+
+        val commitThread = checkSuiteThread.copy(
+            id = "t_cm",
+            subjectType = NotificationSubjectType.COMMIT,
+            subjectUrl = "https://api.github.com/repos/octocat/app/commits/abc1234"
+        )
+        assertNull(commitThread.subjectNumber)
+        assertEquals("abc1234", commitThread.commitSha)
+        assertEquals("https://github.com/octocat/app/commit/abc1234", commitThread.htmlFallbackUrl)
+
+        val prThread = checkSuiteThread.copy(
+            id = "t_pr",
+            subjectType = NotificationSubjectType.PULL_REQUEST,
+            subjectUrl = "https://api.github.com/repos/octocat/app/pulls/42"
+        )
+        assertEquals(42, prThread.subjectNumber)
+        assertEquals("https://github.com/octocat/app/pull/42", prThread.htmlFallbackUrl)
     }
 }

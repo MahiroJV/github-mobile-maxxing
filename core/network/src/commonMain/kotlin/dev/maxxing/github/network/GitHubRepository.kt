@@ -1346,6 +1346,23 @@ class GitHubRepository(
         }
     }
 
+    suspend fun getCheckRunsForCheckSuite(
+        owner: String,
+        repo: String,
+        checkSuiteId: Long,
+        forceRefresh: Boolean = false
+    ): Result<List<CheckRunSummary>> {
+        val key = RepoPathKey(owner, repo, "", "check-suite:$checkSuiteId")
+        if (!forceRefresh) {
+            checkRunsCache.peekIfFresh(key)?.let { return Result.success(it) }
+        }
+        return runCatching {
+            restService.fetchCheckRunsForCheckSuite(owner, repo, checkSuiteId)
+        }.onSuccess {
+            checkRunsCache.put(key, it)
+        }
+    }
+
     fun peekReleases(owner: String, repo: String): List<ReleaseSummary>? =
         releasesCache.peek(RepoKey(owner, repo))
 
