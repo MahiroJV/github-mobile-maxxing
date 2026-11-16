@@ -149,6 +149,7 @@ import dev.maxxing.github.model.IssueStateFilter
 import dev.maxxing.github.model.ReleaseSummary
 import dev.maxxing.github.model.RepoDetail
 import dev.maxxing.github.model.RepoInsightsData
+import dev.maxxing.github.model.RepoParentSummary
 import dev.maxxing.github.model.RepoSecurityOverview
 import dev.maxxing.github.model.RepoSummary
 import dev.maxxing.github.model.resolveRepoCapabilities
@@ -208,24 +209,31 @@ fun ReposScreen(
     onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
-    var selectedRepo by remember { mutableStateOf<RepoSummary?>(null) }
-    var selectedInitialFilePath by remember { mutableStateOf<String?>(null) }
+    var repoStack by remember { mutableStateOf<List<Pair<RepoSummary, String?>>>(emptyList()) }
     var selectedIssueTarget by remember { mutableStateOf<IssuePullTarget?>(null) }
+
+    fun pushRepo(repo: RepoSummary, initialFilePath: String? = null) {
+        val currentTop = repoStack.lastOrNull()
+        repoStack = if (currentTop != null && currentTop.first.fullName.equals(repo.fullName, ignoreCase = true) && initialFilePath == null) {
+            repoStack.dropLast(1) + (repo to currentTop.second)
+        } else {
+            repoStack + (repo to initialFilePath)
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         RepoListPane(
             container = container,
-            onSelectRepo = {
-                selectedInitialFilePath = null
-                selectedRepo = it
-            },
+            onSelectRepo = { pushRepo(it) },
             onSelectCodeHit = { hit ->
-                selectedInitialFilePath = hit.path
-                selectedRepo = RepoSummary(
-                    id = "code_${hit.repoFullName}",
-                    name = hit.repoName,
-                    owner = hit.repoOwner,
-                    fullName = hit.repoFullName
+                pushRepo(
+                    repo = RepoSummary(
+                        id = "code_${hit.repoFullName}",
+                        name = hit.repoName,
+                        owner = hit.repoOwner,
+                        fullName = hit.repoFullName
+                    ),
+                    initialFilePath = hit.path
                 )
             },
             onSelectIssuePull = { selectedIssueTarget = it },
@@ -234,26 +242,17 @@ fun ReposScreen(
         )
 
         MaxxingPredictiveOverlayHost(
-            target = selectedRepo,
-            onBack = {
-                selectedRepo = null
-                selectedInitialFilePath = null
-            },
-            contentKey = { it.fullName }
-        ) { repo ->
+            target = repoStack.lastOrNull(),
+            onBack = { repoStack = repoStack.dropLast(1) },
+            contentKey = { it.first.fullName }
+        ) { (repo, initialPath) ->
             RepoDetailScreen(
                 repo = repo,
                 container = container,
-                initialFilePath = selectedInitialFilePath,
-                onBack = {
-                    selectedRepo = null
-                    selectedInitialFilePath = null
-                },
+                initialFilePath = initialPath,
+                onBack = { repoStack = repoStack.dropLast(1) },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
-                onOpenRepo = { nextRepo ->
-                    selectedInitialFilePath = null
-                    selectedRepo = nextRepo
-                },
+                onOpenRepo = { nextRepo -> pushRepo(nextRepo) },
                 onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
@@ -1160,23 +1159,24 @@ fun RepoDetailScreen(
     var issuesError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var pullsError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var isLoading by remember(repo.fullName) { mutableStateOf(detail == null && entries.isEmpty()) }
-    var showCreatePrDialog by remember { mutableStateOf(false) }
-    var creatingPr by remember { mutableStateOf(false) }
-    var createPrError by remember { mutableStateOf<String?>(null) }
+    var showCreatePrDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var creatingPr by remember(repo.fullName) { mutableStateOf(false) }
+    var createPrError by remember(repo.fullName) { mutableStateOf<String?>(null) }
 
-    var showFileEditorDialog by remember { mutableStateOf(false) }
-    var editingExistingFile by remember { mutableStateOf<FileContent?>(null) }
-    var showDeleteFileDialog by remember { mutableStateOf(false) }
-    var fileMutationBusy by remember { mutableStateOf(false) }
-    var fileMutationError by remember { mutableStateOf<String?>(null) }
+    var showFileEditorDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var editingExistingFile by remember(repo.fullName) { mutableStateOf<FileContent?>(null) }
+    var showDeleteFileDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var fileMutationBusy by remember(repo.fullName) { mutableStateOf(false) }
+    var fileMutationError by remember(repo.fullName) { mutableStateOf<String?>(null) }
 
-    var showBranchMenu by remember { mutableStateOf(false) }
-    var showCreateIssueDialog by remember { mutableStateOf(false) }
-    var newIssueTitle by remember { mutableStateOf("") }
-    var newIssueBody by remember { mutableStateOf("") }
+    var showBranchMenu by remember(repo.fullName) { mutableStateOf(false) }
+    var showCreateIssueDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var newIssueTitle by remember(repo.fullName) { mutableStateOf("") }
+    var newIssueBody by remember(repo.fullName) { mutableStateOf("") }
 
-    var showPeopleDialog by remember { mutableStateOf(false) }
-    var peopleTab by remember { mutableStateOf(RepoPeopleTab.STARGAZERS) }
+    var showPeopleDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var peopleTab by remember(repo.fullName) { mutableStateOf(RepoPeopleTab.STARGAZERS) }
+    var forksSort by remember(repo.fullName) { mutableStateOf("stargazers") }
     var stargazersList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
     var forksList by remember(repo.fullName) { mutableStateOf<List<RepoSummary>?>(null) }
     var contributorsList by remember(repo.fullName) { mutableStateOf<List<UserSummary>?>(null) }
@@ -1189,6 +1189,14 @@ fun RepoDetailScreen(
     }
     var commitsLoading by remember(repo.fullName, currentRef) { mutableStateOf(false) }
     var commitsError by remember(repo.fullName, currentRef) { mutableStateOf<String?>(null) }
+    var commitsRequestSeq by remember(repo.fullName) { mutableStateOf(0) }
+    var dirRequestSeq by remember(repo.fullName) { mutableStateOf(0) }
+    var fileRequestSeq by remember(repo.fullName) { mutableStateOf(0) }
+    var compareRequestSeq by remember(repo.fullName) { mutableStateOf(0) }
+    var upstreamCompareRequestSeq by remember(repo.fullName) { mutableStateOf(0) }
+    var upstreamCompare by remember(repo.fullName, currentRef) { mutableStateOf<BranchCompareResult?>(null) }
+    var upstreamCompareLoading by remember(repo.fullName, currentRef) { mutableStateOf(false) }
+    var showForkOnlyCommits by remember(repo.fullName, currentRef) { mutableStateOf(false) }
 
     var openedCommitSha by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var openedCommitDetail by remember(repo.fullName) { mutableStateOf<CommitDetail?>(null) }
@@ -1215,13 +1223,13 @@ fun RepoDetailScreen(
     var jobLogsText by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var jobLogsLoading by remember(repo.fullName) { mutableStateOf(false) }
     var actionsBusy by remember(repo.fullName) { mutableStateOf(false) }
-    var showDispatchDialog by remember { mutableStateOf(false) }
+    var showDispatchDialog by remember(repo.fullName) { mutableStateOf(false) }
     var releases by remember(repo.fullName) { mutableStateOf(container.repository.peekReleases(repo.owner, repo.name)) }
     var releasesLoading by remember(repo.fullName) { mutableStateOf(false) }
     var releasesError by remember(repo.fullName) { mutableStateOf<String?>(null) }
-    var showCreateReleaseDialog by remember { mutableStateOf(false) }
-    var creatingRelease by remember { mutableStateOf(false) }
-    var createReleaseError by remember { mutableStateOf<String?>(null) }
+    var showCreateReleaseDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var creatingRelease by remember(repo.fullName) { mutableStateOf(false) }
+    var createReleaseError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var selectedDiscussionCategoryId by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var discussionsData by remember(repo.fullName) {
         mutableStateOf(container.repository.peekDiscussions(repo.owner, repo.name))
@@ -1234,9 +1242,9 @@ fun RepoDetailScreen(
     var discussionDetailLoading by remember(repo.fullName) { mutableStateOf(false) }
     var discussionDetailError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var discussionCommentBusy by remember(repo.fullName) { mutableStateOf(false) }
-    var showCreateDiscussionDialog by remember { mutableStateOf(false) }
-    var creatingDiscussion by remember { mutableStateOf(false) }
-    var createDiscussionError by remember { mutableStateOf<String?>(null) }
+    var showCreateDiscussionDialog by remember(repo.fullName) { mutableStateOf(false) }
+    var creatingDiscussion by remember(repo.fullName) { mutableStateOf(false) }
+    var createDiscussionError by remember(repo.fullName) { mutableStateOf<String?>(null) }
     var securityOverview by remember(repo.fullName) {
         mutableStateOf(container.repository.peekRepoSecurityOverview(repo.owner, repo.name))
     }
@@ -1422,23 +1430,60 @@ fun RepoDetailScreen(
     }
 
     fun loadCommits(ref: String, forceRefresh: Boolean = false) {
+        val reqSeq = ++commitsRequestSeq
         scope.launch {
-            val cached = container.repository.peekRepoCommits(repo.owner, repo.name, ref)
+            val cached = if (forceRefresh) null else container.repository.peekRepoCommits(repo.owner, repo.name, ref)
             if (cached != null) {
-                repoCommits = cached
-                commitsLoading = false
-            } else {
-                commitsLoading = true
-            }
-            commitsError = null
-            container.repository.getRepoCommits(repo.owner, repo.name, ref, forceRefresh = forceRefresh)
-                .onSuccess {
-                    repoCommits = it
+                if (reqSeq == commitsRequestSeq && ref == currentRef) {
+                    repoCommits = cached
                     commitsLoading = false
                 }
+            } else if (reqSeq == commitsRequestSeq && ref == currentRef) {
+                commitsLoading = true
+            }
+            if (reqSeq == commitsRequestSeq && ref == currentRef) {
+                commitsError = null
+            }
+            container.repository.getRepoCommits(repo.owner, repo.name, ref, forceRefresh = forceRefresh)
+                .onSuccess { loaded ->
+                    if (reqSeq == commitsRequestSeq && ref == currentRef) {
+                        repoCommits = loaded
+                        commitsLoading = false
+                    }
+                }
+                .onFailure { err ->
+                    if (reqSeq == commitsRequestSeq && ref == currentRef) {
+                        commitsError = err.message ?: "Failed to load commits"
+                        commitsLoading = false
+                    }
+                }
+        }
+    }
+
+    fun loadUpstreamCompare(parent: RepoParentSummary, ref: String, forceRefresh: Boolean = false) {
+        val baseSpec = "${parent.owner}:${parent.defaultBranch}"
+        val reqSeq = ++upstreamCompareRequestSeq
+        scope.launch {
+            val cached = if (forceRefresh) null else container.repository.peekCompareRefs(repo.owner, repo.name, baseSpec, ref)
+            if (cached != null) {
+                if (reqSeq == upstreamCompareRequestSeq && ref == currentRef) {
+                    upstreamCompare = cached
+                    upstreamCompareLoading = false
+                }
+            } else if (reqSeq == upstreamCompareRequestSeq && ref == currentRef) {
+                upstreamCompareLoading = true
+            }
+            container.repository.compareRefs(repo.owner, repo.name, baseSpec, ref, forceRefresh = forceRefresh)
+                .onSuccess { cmp ->
+                    if (reqSeq == upstreamCompareRequestSeq && ref == currentRef) {
+                        upstreamCompare = cmp
+                        upstreamCompareLoading = false
+                    }
+                }
                 .onFailure {
-                    commitsError = it.message ?: "Failed to load commits"
-                    commitsLoading = false
+                    if (reqSeq == upstreamCompareRequestSeq && ref == currentRef) {
+                        upstreamCompareLoading = false
+                    }
                 }
         }
     }
@@ -1455,27 +1500,31 @@ fun RepoDetailScreen(
                 commitDetailLoading = true
             }
             container.repository.getCommitDetail(repo.owner, repo.name, sha, forceRefresh = false)
-                .onSuccess { openedCommitDetail = it }
+                .onSuccess { if (openedCommitSha == sha) openedCommitDetail = it }
                 .onFailure { onMessage(it.message ?: "Failed to load commit diff") }
             commitDetailLoading = false
         }
     }
 
     fun runCompare(base: String, head: String, forceRefresh: Boolean = false) {
+        val reqSeq = ++compareRequestSeq
         compareBase = base
         compareHead = head
         scope.launch {
             compareLoading = true
             compareError = null
             container.repository.compareRefs(repo.owner, repo.name, base, head, forceRefresh = forceRefresh)
-                .onSuccess { compareResult = it }
-                .onFailure { compareError = it.message ?: "Compare failed" }
-            compareLoading = false
+                .onSuccess { if (reqSeq == compareRequestSeq) compareResult = it }
+                .onFailure { if (reqSeq == compareRequestSeq) compareError = it.message ?: "Compare failed" }
+            if (reqSeq == compareRequestSeq) compareLoading = false
         }
     }
 
-    fun openPeopleTab(tab: RepoPeopleTab) {
+    fun openPeopleTab(tab: RepoPeopleTab, forkSortOverride: String = forksSort) {
         peopleTab = tab
+        if (tab == RepoPeopleTab.FORKS) {
+            forksSort = forkSortOverride
+        }
         showPeopleDialog = true
         peopleError = null
         val targetOwner = detail?.summary?.owner?.takeIf { it.isNotBlank() }
@@ -1492,7 +1541,7 @@ fun RepoDetailScreen(
                         peopleError = msg
                         onMessage(msg)
                     }
-                RepoPeopleTab.FORKS -> container.repository.getRepoForks(targetOwner, targetRepo)
+                RepoPeopleTab.FORKS -> container.repository.getRepoForks(targetOwner, targetRepo, sort = forkSortOverride)
                     .onSuccess { forksList = it }
                     .onFailure { err ->
                         val msg = err.message ?: "Failed to load forks"
@@ -1512,10 +1561,11 @@ fun RepoDetailScreen(
     }
 
     fun loadDirectory(path: String, ref: String, forceRefresh: Boolean = false) {
+        val reqSeq = ++dirRequestSeq
         scope.launch {
             openedFile = null
             currentPath = path
-            val cached = container.repository.peekDirectoryContents(repo.owner, repo.name, path, ref)
+            val cached = if (forceRefresh) null else container.repository.peekDirectoryContents(repo.owner, repo.name, path, ref)
             if (cached != null) {
                 entries = cached
                 isLoading = false
@@ -1523,13 +1573,18 @@ fun RepoDetailScreen(
                 isLoading = true
             }
             container.repository.getDirectoryContents(repo.owner, repo.name, path, ref, forceRefresh = forceRefresh)
-                .onSuccess { entries = it }
-                .onFailure { onMessage(it.message ?: "Failed to load directory") }
-            isLoading = false
+                .onSuccess { loaded ->
+                    if (reqSeq == dirRequestSeq && path == currentPath && ref == currentRef) {
+                        entries = loaded
+                    }
+                }
+                .onFailure { if (reqSeq == dirRequestSeq) onMessage(it.message ?: "Failed to load directory") }
+            if (reqSeq == dirRequestSeq) isLoading = false
         }
     }
 
     fun loadFile(path: String, ref: String) {
+        val reqSeq = ++fileRequestSeq
         scope.launch {
             val cached = container.repository.peekFileContent(repo.owner, repo.name, path, ref)
             if (cached != null) {
@@ -1539,9 +1594,13 @@ fun RepoDetailScreen(
                 isLoading = true
             }
             container.repository.getFileContent(repo.owner, repo.name, path, ref, forceRefresh = false)
-                .onSuccess { openedFile = it }
-                .onFailure { onMessage(it.message ?: "Failed to load file") }
-            isLoading = false
+                .onSuccess { loaded ->
+                    if (reqSeq == fileRequestSeq && ref == currentRef) {
+                        openedFile = loaded
+                    }
+                }
+                .onFailure { if (reqSeq == fileRequestSeq) onMessage(it.message ?: "Failed to load file") }
+            if (reqSeq == fileRequestSeq) isLoading = false
         }
     }
 
@@ -1614,26 +1673,42 @@ fun RepoDetailScreen(
         showCreatePrDialog ||
         showCreateIssueDialog
 
+    val effectiveParent = detail?.summary?.parent ?: repo.parent
+    val isForkRepo = detail?.summary?.isFork ?: repo.isFork || effectiveParent != null
+
     LaunchedEffect(repo.fullName, initialFilePath) {
         isLoading = detail == null && entries.isEmpty()
         val initialParent = initialFilePath?.substringBeforeLast('/', "")?.takeIf { it.isNotBlank() } ?: ""
         currentPath = initialParent
-        var resolvedRef = currentRef
+        val initialRef = currentRef
+        var resolvedRef = initialRef
+        var refChanged = false
         coroutineScope {
             val detailJob = async { container.repository.getRepoDetail(repo.owner, repo.name) }
-            val readmeJob = async { container.repository.getReadme(repo.owner, repo.name, resolvedRef) }
-            val entriesJob = async { container.repository.getDirectoryContents(repo.owner, repo.name, initialParent, resolvedRef) }
+            val readmeJob = async { container.repository.getReadme(repo.owner, repo.name, initialRef) }
+            val entriesJob = async { container.repository.getDirectoryContents(repo.owner, repo.name, initialParent, initialRef) }
 
             detailJob.await().onSuccess {
                 detail = it
                 isStarred = it.summary.viewerHasStarred
-                resolvedRef = it.summary.defaultBranch
-                currentRef = resolvedRef
-                compareBase = resolvedRef
-                compareHead = resolvedRef
+                val nextDefault = it.summary.defaultBranch.ifBlank { repo.defaultBranch }
+                if (nextDefault != initialRef) {
+                    refChanged = true
+                    resolvedRef = nextDefault
+                    currentRef = resolvedRef
+                    compareBase = resolvedRef
+                    compareHead = resolvedRef
+                }
             }
-            readmeJob.await().onSuccess { readme = it }
-            entriesJob.await().onSuccess { entries = it }
+            if (refChanged) {
+                val updatedReadme = async { container.repository.getReadme(repo.owner, repo.name, resolvedRef) }
+                val updatedEntries = async { container.repository.getDirectoryContents(repo.owner, repo.name, initialParent, resolvedRef) }
+                updatedReadme.await().onSuccess { if (currentRef == resolvedRef) readme = it }
+                updatedEntries.await().onSuccess { if (currentRef == resolvedRef && currentPath == initialParent) entries = it }
+            } else {
+                readmeJob.await().onSuccess { if (currentRef == initialRef) readme = it }
+                entriesJob.await().onSuccess { if (currentRef == initialRef && currentPath == initialParent) entries = it }
+            }
         }
         if (!initialFilePath.isNullOrBlank()) {
             loadFile(initialFilePath, resolvedRef)
@@ -1650,10 +1725,7 @@ fun RepoDetailScreen(
             container.repository.getRepoTags(repo.owner, repo.name)
                 .onSuccess { repoTags = it }
         }
-        scope.launch {
-            container.repository.getRepoCommits(repo.owner, repo.name, resolvedRef)
-                .onSuccess { if (currentRef == resolvedRef && repoCommits == null) repoCommits = it }
-        }
+        loadCommits(resolvedRef, forceRefresh = false)
         scope.launch {
             container.repository.getRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = false, stateFilter = IssueStateFilter.OPEN)
                 .onSuccess { if (issueStateFilter == IssueStateFilter.OPEN && repoIssues == null) repoIssues = it }
@@ -1665,6 +1737,13 @@ fun RepoDetailScreen(
         scope.launch {
             container.repository.getRepoIssuesOrPulls(repo.owner, repo.name, pullRequests = true, stateFilter = IssueStateFilter.OPEN)
                 .onSuccess { if (pullStateFilter == IssueStateFilter.OPEN && repoPulls == null) repoPulls = it }
+        }
+    }
+
+    LaunchedEffect(repo.fullName, currentRef, effectiveParent?.fullName, effectiveParent?.defaultBranch) {
+        val parent = effectiveParent
+        if (parent != null) {
+            loadUpstreamCompare(parent, currentRef, forceRefresh = false)
         }
     }
 
@@ -1800,6 +1879,48 @@ fun RepoDetailScreen(
                             Spacer(Modifier.width(4.dp))
                             Text("Issue", maxLines = 1, softWrap = false)
                         }
+                    }
+                }
+
+                if (isForkRepo) {
+                    val parentTarget = effectiveParent
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .padding(start = 12.dp, bottom = 2.dp)
+                            .then(
+                                if (parentTarget != null) {
+                                    Modifier.clickable {
+                                        onOpenRepo(
+                                            RepoSummary(
+                                                id = "parent_${parentTarget.fullName}",
+                                                name = parentTarget.name,
+                                                owner = parentTarget.owner,
+                                                fullName = parentTarget.fullName,
+                                                defaultBranch = parentTarget.defaultBranch,
+                                                ownerAvatarUrl = parentTarget.ownerAvatarUrl
+                                            )
+                                        )
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                    ) {
+                        Icon(
+                            Lucide.GitFork,
+                            contentDescription = "Fork",
+                            tint = if (parentTarget != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = if (parentTarget != null) "Forked from ${parentTarget.fullName}" else "Fork repository",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (parentTarget != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -1992,7 +2113,7 @@ fun RepoDetailScreen(
                                         }
                                         scope.launch {
                                             container.repository.getReadme(repo.owner, repo.name, selected)
-                                                .onSuccess { readme = it }
+                                                .onSuccess { if (currentRef == selected) readme = it }
                                         }
                                     }
                                     if (branches.isEmpty() && repoTags.isEmpty()) {
@@ -2030,9 +2151,23 @@ fun RepoDetailScreen(
                                     showCompareView = true
                                     activeTab = RepoDetailTab.CODE
                                     val branches = detail?.branches.orEmpty()
-                                    val base = detail?.summary?.defaultBranch ?: repo.defaultBranch
-                                    val head = if (currentRef != base) currentRef else {
-                                        branches.firstOrNull { it.name != base }?.name ?: currentRef
+                                    val defaultRef = detail?.summary?.defaultBranch ?: repo.defaultBranch
+                                    val otherBranch = branches.firstOrNull { it.name != defaultRef }?.name
+                                    val upstreamBase = effectiveParent?.let { "${it.owner}:${it.defaultBranch}" }
+                                    val base: String
+                                    val head: String
+                                    if (currentRef != defaultRef) {
+                                        base = defaultRef
+                                        head = currentRef
+                                    } else if (otherBranch != null) {
+                                        base = defaultRef
+                                        head = otherBranch
+                                    } else if (upstreamBase != null) {
+                                        base = upstreamBase
+                                        head = currentRef
+                                    } else {
+                                        base = defaultRef
+                                        head = currentRef
                                     }
                                     compareBase = base
                                     compareHead = head
@@ -2120,8 +2255,9 @@ fun RepoDetailScreen(
             when (activeTab) {
             RepoDetailTab.CODE -> {
                 if (showCommitsView || showCompareView || openedCommitSha != null) {
-                    val allRefs = remember(detail?.branches, repoTags, currentRef, repo.defaultBranch) {
+                    val allRefs = remember(detail?.branches, repoTags, currentRef, repo.defaultBranch, effectiveParent) {
                         buildList {
+                            effectiveParent?.let { add("${it.owner}:${it.defaultBranch}") }
                             addAll(detail?.branches.orEmpty().map { it.name })
                             addAll(repoTags.map { it.name })
                             add(currentRef)
@@ -2183,12 +2319,24 @@ fun RepoDetailScreen(
                                 commits = repoCommits,
                                 isLoading = commitsLoading,
                                 errorMsg = commitsError,
+                                parentRepo = effectiveParent,
+                                upstreamCompare = upstreamCompare,
+                                upstreamCompareLoading = upstreamCompareLoading,
+                                forkOnlyCommits = showForkOnlyCommits,
                                 commitAvatarResolver = avatarResolver,
                                 onBackToCode = { showCommitsView = false },
-                                onRefresh = { loadCommits(currentRef, forceRefresh = true) },
+                                onRefresh = {
+                                    loadCommits(currentRef, forceRefresh = true)
+                                    effectiveParent?.let { loadUpstreamCompare(it, currentRef, forceRefresh = true) }
+                                },
+                                onToggleForkOnly = { showForkOnlyCommits = it },
                                 onOpenCompare = {
                                     showCompareView = true
-                                    runCompare(compareBase, compareHead)
+                                    val targetBase = effectiveParent?.let { "${it.owner}:${it.defaultBranch}" } ?: compareBase
+                                    val targetHead = if (effectiveParent != null) currentRef else compareHead
+                                    compareBase = targetBase
+                                    compareHead = targetHead
+                                    runCompare(targetBase, targetHead)
                                 },
                                 onOpenCommit = { commit -> openCommit(commit.sha) },
                                 onOpenUser = onOpenUser
@@ -2885,6 +3033,18 @@ fun RepoDetailScreen(
                                 }
                             }
                             RepoPeopleTab.FORKS -> {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilterChip(
+                                        selected = forksSort == "stargazers",
+                                        onClick = { openPeopleTab(RepoPeopleTab.FORKS, forkSortOverride = "stargazers") },
+                                        label = { Text("Most starred") }
+                                    )
+                                    FilterChip(
+                                        selected = forksSort == "newest",
+                                        onClick = { openPeopleTab(RepoPeopleTab.FORKS, forkSortOverride = "newest") },
+                                        label = { Text("Newest") }
+                                    )
+                                }
                                 val list = forksList.orEmpty()
                                 if (!peopleLoading && peopleError == null && list.isEmpty()) {
                                     Text("No forks yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2902,7 +3062,16 @@ fun RepoDetailScreen(
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Icon(Lucide.GitFork, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Text(fork.fullName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(fork.fullName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            val meta = buildString {
+                                                append(fork.defaultBranch)
+                                                if (fork.updatedAt.length >= 10) {
+                                                    append(" · updated ${fork.updatedAt.take(10)}")
+                                                }
+                                            }
+                                            Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                         Icon(MaxxingFilledIcons.Star, contentDescription = null, tint = MaxxingStarAmber, modifier = Modifier.size(13.dp))
                                         Text(formatCompactCount(fork.stargazersCount), style = MaterialTheme.typography.labelSmall)
                                     }
@@ -3284,13 +3453,24 @@ private fun RepoCommitsTabContent(
     commits: List<CommitSummary>?,
     isLoading: Boolean,
     errorMsg: String?,
+    parentRepo: RepoParentSummary? = null,
+    upstreamCompare: BranchCompareResult? = null,
+    upstreamCompareLoading: Boolean = false,
+    forkOnlyCommits: Boolean = false,
     commitAvatarResolver: (CommitSummary) -> String = { it.authorAvatarUrl },
     onBackToCode: () -> Unit,
     onRefresh: () -> Unit,
+    onToggleForkOnly: (Boolean) -> Unit = {},
     onOpenCompare: () -> Unit,
     onOpenCommit: (CommitSummary) -> Unit,
     onOpenUser: (String) -> Unit
 ) {
+    val displayedCommits = if (forkOnlyCommits && upstreamCompare != null && upstreamCompare.aheadBy > 0) {
+        upstreamCompare.commits.asReversed()
+    } else {
+        commits
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -3319,7 +3499,7 @@ private fun RepoCommitsTabContent(
             ) {
                 Icon(Lucide.ArrowLeftRight, contentDescription = null, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(5.dp))
-                Text("Compare", maxLines = 1, softWrap = false)
+                Text(if (parentRepo != null) "Compare upstream" else "Compare", maxLines = 1, softWrap = false)
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onRefresh) {
@@ -3327,22 +3507,77 @@ private fun RepoCommitsTabContent(
             }
         }
 
-        if (isLoading && !commits.isNullOrEmpty()) {
+        if (parentRepo != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val upstreamLabel = "${parentRepo.owner}:${parentRepo.defaultBranch}"
+                    val statusLine = when {
+                        upstreamCompareLoading && upstreamCompare == null ->
+                            "Checking divergence against $upstreamLabel..."
+                        upstreamCompare == null ->
+                            "Forked from ${parentRepo.fullName}"
+                        upstreamCompare.aheadBy == 0 && upstreamCompare.behindBy == 0 ->
+                            "Even with $upstreamLabel (no unique fork commits on $currentRef)"
+                        upstreamCompare.aheadBy == 0 ->
+                            "0 commits ahead · ${upstreamCompare.behindBy} behind $upstreamLabel (shares ancestor history)"
+                        else ->
+                            "${upstreamCompare.aheadBy} ahead · ${upstreamCompare.behindBy} behind $upstreamLabel"
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Lucide.GitFork, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = statusLine,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (upstreamCompare != null && upstreamCompare.aheadBy > 0) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = !forkOnlyCommits,
+                                onClick = { onToggleForkOnly(false) },
+                                label = { Text("All commits") }
+                            )
+                            FilterChip(
+                                selected = forkOnlyCommits,
+                                onClick = { onToggleForkOnly(true) },
+                                label = { Text("Fork only (${upstreamCompare.aheadBy})") }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isLoading && !displayedCommits.isNullOrEmpty()) {
             MaxxingWavyProgress(modifier = Modifier.padding(horizontal = 16.dp))
         }
 
         PullToRefreshBox(
-            isRefreshing = isLoading && !commits.isNullOrEmpty(),
+            isRefreshing = isLoading && !displayedCommits.isNullOrEmpty(),
             onRefresh = onRefresh,
             modifier = Modifier.fillMaxSize()
         ) {
             when {
-                isLoading && commits == null -> {
+                isLoading && displayedCommits == null -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         MaxxingLoadingState(message = "Loading commits...")
                     }
                 }
-                errorMsg != null && commits.isNullOrEmpty() -> {
+                errorMsg != null && displayedCommits.isNullOrEmpty() -> {
                     Column(
                         modifier = Modifier.fillMaxSize().padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -3353,7 +3588,7 @@ private fun RepoCommitsTabContent(
                         FilledTonalButton(onClick = onRefresh) { Text("Retry") }
                     }
                 }
-                commits.isNullOrEmpty() -> {
+                displayedCommits.isNullOrEmpty() -> {
                     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                         Text("No commits found for $currentRef", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -3364,7 +3599,7 @@ private fun RepoCommitsTabContent(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(items = commits, key = { it.sha }, contentType = { "commit_summary" }) { commit ->
+                        items(items = displayedCommits, key = { it.sha }, contentType = { "commit_summary" }) { commit ->
                             CommitSummaryCard(
                                 commit = commit,
                                 resolvedAvatarUrl = commitAvatarResolver(commit),

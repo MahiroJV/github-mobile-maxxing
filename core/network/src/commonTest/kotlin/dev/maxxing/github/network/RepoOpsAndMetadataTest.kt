@@ -328,4 +328,104 @@ class RepoOpsAndMetadataTest {
         assertEquals("v2.0", detail.milestone?.title)
         assertEquals(4, detail.milestone?.number)
     }
+
+    @Test
+    fun `graphql and rest parse fork parent summary and forks sort parameter`() = runTest {
+        val requestedSorts = mutableListOf<String?>()
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            when (path) {
+                "/graphql" -> respond(
+                    content = """
+                        {
+                          "data": {
+                            "repository": {
+                              "id": "R_fork1",
+                              "name": "app",
+                              "nameWithOwner": "forker/app",
+                              "description": "Forked app",
+                              "isPrivate": false,
+                              "isFork": true,
+                              "isArchived": false,
+                              "hasIssuesEnabled": true,
+                              "viewerPermission": "ADMIN",
+                              "stargazerCount": 2,
+                              "forkCount": 0,
+                              "updatedAt": "2026-11-16T00:00:00Z",
+                              "viewerHasStarred": false,
+                              "owner": { "login": "forker", "avatarUrl": "" },
+                              "primaryLanguage": { "name": "Kotlin", "color": "#A97BFF" },
+                              "defaultBranchRef": { "name": "dev" },
+                              "issues": { "totalCount": 1 },
+                              "homepageUrl": null,
+                              "licenseInfo": null,
+                              "watchers": { "totalCount": 1 },
+                              "repositoryTopics": { "nodes": [] },
+                              "parent": {
+                                "name": "app",
+                                "nameWithOwner": "upstream/app",
+                                "owner": { "login": "upstream", "avatarUrl": "https://a/up.png" },
+                                "defaultBranchRef": { "name": "main" }
+                              }
+                            }
+                          }
+                        }
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/repos/forker/app/branches" -> respond(
+                    content = """[{"name":"dev","commit":{"sha":"abc123"}}]""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/repos/upstream/app/forks" -> {
+                    requestedSorts += request.url.parameters["sort"]
+                    respond(
+                        content = """
+                            [
+                              {
+                                "id": 22,
+                                "node_id": "R_22",
+                                "name": "app",
+                                "full_name": "forker/app",
+                                "fork": true,
+                                "default_branch": "dev",
+                                "stargazers_count": 0,
+                                "updated_at": "2026-11-16T05:00:00Z",
+                                "owner": { "login": "forker", "avatar_url": "" },
+                                "parent": {
+                                  "name": "app",
+                                  "full_name": "upstream/app",
+                                  "default_branch": "main",
+                                  "owner": { "login": "upstream", "avatar_url": "" }
+                                }
+                              }
+                            ]
+                        """.trimIndent(),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json")
+                    )
+                }
+                else -> error("Unexpected request: ${request.method} $path")
+            }
+        }
+
+        val http = createClient(engine)
+        val sm = SessionManager(RepoOpsTokenStore(), DeviceFlowClient(http, "cid"))
+        sm.initialize()
+        val repo = GitHubRepository(sm, httpClient = http)
+
+        val detail = repo.getRepoDetail("forker", "app").getOrThrow()
+        assertTrue(detail.summary.isFork)
+        assertEquals("upstream/app", detail.summary.parent?.fullName)
+        assertEquals("upstream", detail.summary.parent?.owner)
+        assertEquals("main", detail.summary.parent?.defaultBranch)
+
+        val newestForks = repo.getRepoForks("upstream", "app", sort = "newest").getOrThrow()
+        assertEquals(listOf<String?>("newest"), requestedSorts)
+        assertEquals("forker/app", newestForks.single().fullName)
+        assertEquals("upstream/app", newestForks.single().parent?.fullName)
+        assertEquals("dev", newestForks.single().defaultBranch)
+    }
 }

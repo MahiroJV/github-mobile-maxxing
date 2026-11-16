@@ -38,4 +38,24 @@ class ShellNavStateTest {
         assertFalse(state.hasOverlay)
         assertTrue(state.tabReselectNonce > 0)
     }
+
+    @Test
+    fun repoStackPushesForkAndPopsBackToUpstreamBeforeClosingOverlay() {
+        val upstream = RepoSummary(id = "r1", name = "app", owner = "upstream", fullName = "upstream/app")
+        val fork = RepoSummary(id = "r2", name = "app", owner = "forker", fullName = "forker/app", isFork = true)
+
+        var state = ShellNavState(currentDestination = ShellDestination.HOME)
+            .openRepo(upstream)
+            .openRepo(fork)
+
+        assertEquals("forker/app", state.activeRepo?.fullName)
+        assertEquals(listOf("upstream/app", "forker/app"), state.repoBackStack.map { it.fullName })
+
+        state = state.popBackOrReturnHome()
+        assertEquals("upstream/app", state.activeRepo?.fullName)
+
+        state = state.popBackOrReturnHome()
+        assertNull(state.activeRepo)
+        assertFalse(state.hasOverlay)
+    }
 }

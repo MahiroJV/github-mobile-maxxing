@@ -13,21 +13,26 @@ enum class ShellDestination {
 data class ShellNavState(
     val currentDestination: ShellDestination = ShellDestination.HOME,
     val profileBackStack: List<String> = emptyList(),
+    val repoBackStack: List<RepoSummary> = emptyList(),
     val overlayRepo: RepoSummary? = null,
     val overlayIssue: IssuePullTarget? = null,
     val overlayGistsUser: String? = null,
     val tabReselectNonce: Int = 0
 ) {
+    val activeRepo: RepoSummary?
+        get() = repoBackStack.lastOrNull() ?: overlayRepo
+
     val hasOverlay: Boolean
         get() = overlayGistsUser != null ||
             overlayIssue != null ||
-            overlayRepo != null ||
+            activeRepo != null ||
             profileBackStack.isNotEmpty()
 
     fun selectBottomDestination(destination: ShellDestination): ShellNavState {
         val cleared = copy(
             currentDestination = destination,
             profileBackStack = emptyList(),
+            repoBackStack = emptyList(),
             overlayRepo = null,
             overlayIssue = null,
             overlayGistsUser = null,
@@ -43,6 +48,7 @@ data class ShellNavState(
     fun openUserProfile(login: String): ShellNavState {
         if (login.isBlank()) return this
         return copy(
+            repoBackStack = emptyList(),
             overlayRepo = null,
             overlayIssue = null,
             overlayGistsUser = null,
@@ -50,10 +56,32 @@ data class ShellNavState(
         )
     }
 
+    fun openRepo(repo: RepoSummary): ShellNavState {
+        val base = if (repoBackStack.isNotEmpty()) repoBackStack else listOfNotNull(overlayRepo)
+        val next = if (base.lastOrNull()?.fullName?.equals(repo.fullName, ignoreCase = true) == true) {
+            base.dropLast(1) + repo
+        } else {
+            base + repo
+        }
+        return copy(
+            repoBackStack = next,
+            overlayRepo = next.lastOrNull()
+        )
+    }
+
+    fun popRepo(): ShellNavState {
+        val base = if (repoBackStack.isNotEmpty()) repoBackStack else listOfNotNull(overlayRepo)
+        val next = if (base.isNotEmpty()) base.dropLast(1) else emptyList()
+        return copy(
+            repoBackStack = next,
+            overlayRepo = next.lastOrNull()
+        )
+    }
+
     fun popBackOrReturnHome(): ShellNavState = when {
         overlayGistsUser != null -> copy(overlayGistsUser = null)
         overlayIssue != null -> copy(overlayIssue = null)
-        overlayRepo != null -> copy(overlayRepo = null)
+        activeRepo != null -> popRepo()
         profileBackStack.isNotEmpty() -> copy(profileBackStack = profileBackStack.dropLast(1))
         currentDestination != ShellDestination.HOME -> copy(currentDestination = ShellDestination.HOME)
         else -> this

@@ -333,7 +333,7 @@ private fun MainAuthenticatedShell(
                         login = login,
                         container = container,
                         onBack = { navState = navState.copy(profileBackStack = navState.profileBackStack.dropLast(1)) },
-                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
+                        onOpenRepo = { navState = navState.openRepo(it) },
                         onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
                         onOpenUser = { nextLogin -> navState = navState.openUserProfile(nextLogin) },
                         onOpenGists = { targetUser -> navState = navState.copy(overlayGistsUser = targetUser) },
@@ -342,16 +342,16 @@ private fun MainAuthenticatedShell(
                 }
 
                 MaxxingPredictiveOverlayHost(
-                    target = navState.overlayRepo,
-                    onBack = { navState = navState.copy(overlayRepo = null) },
+                    target = navState.activeRepo,
+                    onBack = { navState = navState.popRepo() },
                     contentKey = { it.fullName }
                 ) { repo ->
                     RepoDetailScreen(
                         repo = repo,
                         container = container,
-                        onBack = { navState = navState.copy(overlayRepo = null) },
+                        onBack = { navState = navState.popRepo() },
                         onOpenIssueOrPull = { navState = navState.copy(overlayIssue = it) },
-                        onOpenRepo = { navState = navState.copy(overlayRepo = it) },
+                        onOpenRepo = { navState = navState.openRepo(it) },
                         onOpenUser = openUserProfile,
                         onMessage = showMessage
                     )

@@ -3,6 +3,15 @@ package dev.maxxing.github.model
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class RepoParentSummary(
+    val name: String,
+    val owner: String,
+    val fullName: String,
+    val defaultBranch: String = "main",
+    val ownerAvatarUrl: String = ""
+)
+
+@Serializable
 data class RepoSummary(
     val id: String,
     val name: String,
@@ -23,7 +32,8 @@ data class RepoSummary(
     val viewerPermission: String? = null,
     val hasKnownPermission: Boolean = false,
     val isArchived: Boolean = false,
-    val hasIssuesEnabled: Boolean = true
+    val hasIssuesEnabled: Boolean = true,
+    val parent: RepoParentSummary? = null
 )
 
 data class RepoCapabilities(

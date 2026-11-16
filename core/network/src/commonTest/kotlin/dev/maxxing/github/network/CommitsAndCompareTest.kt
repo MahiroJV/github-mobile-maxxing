@@ -262,7 +262,123 @@ class CommitsAndCompareTest {
         assertEquals("https://avatars.example/realuser.png", commits[1].authorAvatarUrl)
 
         // Commit 3: author login without avatar_url gets github avatar url
+        // Commit 3: author login without avatar url gets github avatar url
         assertEquals("octocat", commits[2].authorLogin)
         assertEquals("https://avatars.githubusercontent.com/octocat?size=96", commits[2].authorAvatarUrl)
+    }
+
+    @Test
+    fun forkAndUpstreamCommitsStayIsolatedAndCrossForkCompareEncodesColonRefs() = runTest {
+        val seenRequests = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val sha = request.url.parameters["sha"].orEmpty()
+            seenRequests += "$path?sha=$sha"
+            assertEquals("no-cache", request.headers[HttpHeaders.CacheControl])
+            when (path) {
+                "/repos/upstream/app/commits" -> respond(
+                    content = """
+                        [
+                          {
+                            "sha": "up11111",
+                            "commit": { "message": "upstream: base release", "author": { "name": "Up", "date": "2026-11-15T10:00:00Z" } },
+                            "author": { "login": "upstream", "avatar_url": "" }
+                          }
+                        ]
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                "/repos/forker/app/commits" -> when (sha) {
+                    "empty-init" -> respond(
+                        content = """{"message":"Git Repository is empty."}""",
+                        status = HttpStatusCode.Conflict,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json")
+                    )
+                    "feat/fork-ui" -> respond(
+                        content = """
+                            [
+                              {
+                                "sha": "fk22222",
+                                "commit": { "message": "fork: implement custom header", "author": { "name": "Forker", "date": "2026-11-16T10:00:00Z" } },
+                                "author": { "login": "forker", "avatar_url": "" }
+                              }
+                            ]
+                        """.trimIndent(),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json")
+                    )
+                    else -> respond(
+                        content = """
+                            [
+                              {
+                                "sha": "fk11111",
+                                "commit": { "message": "fork: sync main", "author": { "name": "Forker", "date": "2026-11-16T08:00:00Z" } },
+                                "author": { "login": "forker", "avatar_url": "" }
+                              },
+                              {
+                                "sha": "up11111",
+                                "commit": { "message": "upstream: base release", "author": { "name": "Up", "date": "2026-11-15T10:00:00Z" } },
+                                "author": { "login": "upstream", "avatar_url": "" }
+                              }
+                            ]
+                        """.trimIndent(),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json")
+                    )
+                }
+                "/repos/forker/app/compare/upstream:main...feat%2Ffork-ui" -> respond(
+                    content = """
+                        {
+                          "status": "ahead",
+                          "ahead_by": 1,
+                          "behind_by": 0,
+                          "total_commits": 1,
+                          "commits": [
+                            {
+                              "sha": "fk22222",
+                              "commit": { "message": "fork: implement custom header", "author": { "name": "Forker", "date": "2026-11-16T10:00:00Z" } },
+                              "author": { "login": "forker", "avatar_url": "" }
+                            }
+                          ],
+                          "files": []
+                        }
+                    """.trimIndent(),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json")
+                )
+                else -> error("Unexpected commit/compare request: $path")
+            }
+        }
+        val sessionManager = SessionManager(
+            tokenStore = CommitsTestTokenStore(),
+            deviceFlowClient = DeviceFlowClient(HttpClient(engine))
+        )
+        sessionManager.initialize()
+        val repo = GitHubRepository(sessionManager, httpClient = createClient(engine))
+
+        val upstreamCommits = repo.getRepoCommits("upstream", "app", ref = "main").getOrThrow()
+        assertEquals(listOf("up11111"), upstreamCommits.map { it.sha })
+
+        // Same repo name & branch under fork owner must NOT reuse upstream commits cache
+        val forkMainCommits = repo.getRepoCommits("forker", "app", ref = "main").getOrThrow()
+        assertEquals(listOf("fk11111", "up11111"), forkMainCommits.map { it.sha })
+
+        // Case-insensitive owner lookup reuses fork cache cleanly
+        assertEquals(listOf("fk11111", "up11111"), repo.peekRepoCommits("Forker", "App", "main")?.map { it.sha })
+
+        // Fork branch commits stay distinct
+        val forkFeatureCommits = repo.getRepoCommits("forker", "app", ref = "feat/fork-ui").getOrThrow()
+        assertEquals(listOf("fk22222"), forkFeatureCommits.map { it.sha })
+
+        // Newly created/empty fork returning 409 resolves cleanly to emptyList()
+        val emptyForkCommits = repo.getRepoCommits("forker", "app", ref = "empty-init").getOrThrow()
+        assertTrue(emptyForkCommits.isEmpty())
+
+        // Cross-fork comparison preserves ':' between owner and branch while encoding '/'
+        val compare = repo.compareRefs("forker", "app", base = "upstream:main", head = "feat/fork-ui").getOrThrow()
+        assertEquals(1, compare.aheadBy)
+        assertEquals(listOf("fk22222"), compare.commits.map { it.sha })
+        assertTrue("/repos/forker/app/compare/upstream:main...feat%2Ffork-ui?sha=" in seenRequests)
     }
 }

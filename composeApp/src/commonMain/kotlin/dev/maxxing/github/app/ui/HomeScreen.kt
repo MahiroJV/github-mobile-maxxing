@@ -112,8 +112,16 @@ fun HomeScreen(
     onOpenUser: (String) -> Unit = {},
     onMessage: (String) -> Unit
 ) {
-    var selectedRepo by remember { mutableStateOf<RepoSummary?>(null) }
+    var repoStack by remember { mutableStateOf<List<RepoSummary>>(emptyList()) }
     var selectedIssueTarget by remember { mutableStateOf<IssuePullTarget?>(null) }
+
+    fun pushRepo(repo: RepoSummary) {
+        repoStack = if (repoStack.lastOrNull()?.fullName?.equals(repo.fullName, ignoreCase = true) == true) {
+            repoStack.dropLast(1) + repo
+        } else {
+            repoStack + repo
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         HomeDashboardPane(
@@ -123,11 +131,13 @@ fun HomeScreen(
             onNavigateIssuesPrs = onNavigateIssuesPrs,
             onNavigateRepos = onNavigateRepos,
             onOpenRepo = { owner, name ->
-                selectedRepo = RepoSummary(
-                    id = "$owner/$name",
-                    name = name,
-                    owner = owner,
-                    fullName = "$owner/$name"
+                pushRepo(
+                    RepoSummary(
+                        id = "$owner/$name",
+                        name = name,
+                        owner = owner,
+                        fullName = "$owner/$name"
+                    )
                 )
             },
             onOpenIssueOrPull = { selectedIssueTarget = it },
@@ -137,16 +147,16 @@ fun HomeScreen(
         )
 
         MaxxingPredictiveOverlayHost(
-            target = selectedRepo,
-            onBack = { selectedRepo = null },
+            target = repoStack.lastOrNull(),
+            onBack = { repoStack = repoStack.dropLast(1) },
             contentKey = { it.fullName }
         ) { repo ->
             RepoDetailScreen(
                 repo = repo,
                 container = container,
-                onBack = { selectedRepo = null },
+                onBack = { repoStack = repoStack.dropLast(1) },
                 onOpenIssueOrPull = { selectedIssueTarget = it },
-                onOpenRepo = { selectedRepo = it },
+                onOpenRepo = { pushRepo(it) },
                 onOpenUser = onOpenUser,
                 onMessage = onMessage
             )
@@ -582,6 +592,9 @@ private fun HomeDashboardPane(
                                         onOpenIssueOrPull(
                                             IssuePullTarget(event.repoOwner, event.repoName, num, event.detailTitle)
                                         )
+                                    } else if (event.kind == ActivityEventKind.FORK && !event.detailTitle.isNullOrBlank() && '/' in event.detailTitle!!) {
+                                        val forkFull = event.detailTitle!!.trim()
+                                        onOpenRepo(forkFull.substringBefore('/'), forkFull.substringAfter('/'))
                                     } else if (event.repoOwner.isNotBlank()) {
                                         onOpenRepo(event.repoOwner, event.repoName)
                                     }

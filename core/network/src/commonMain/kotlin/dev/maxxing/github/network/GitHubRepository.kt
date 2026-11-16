@@ -152,6 +152,36 @@ private data class WorkflowRunsKey(val owner: String, val repo: String, val work
 private data class WorkflowRunIdKey(val owner: String, val repo: String, val runId: Long)
 private data class DiscussionsKey(val owner: String, val repo: String, val categoryId: String?)
 
+private fun normalizeRepoPair(owner: String, repo: String): Pair<String, String> {
+    val cleanOwner = owner.trim().lowercase()
+    val cleanRepo = repo.trim().lowercase()
+    return if (cleanOwner.isBlank() && '/' in cleanRepo) {
+        cleanRepo.substringBefore('/').trim() to cleanRepo.substringAfter('/').trim()
+    } else {
+        cleanOwner to cleanRepo.substringAfterLast('/')
+    }
+}
+
+private fun repoKey(owner: String, repo: String): RepoKey {
+    val (o, r) = normalizeRepoPair(owner, repo)
+    return RepoKey(o, r)
+}
+
+private fun repoPathKey(owner: String, repo: String, path: String, ref: String?): RepoPathKey {
+    val (o, r) = normalizeRepoPair(owner, repo)
+    return RepoPathKey(o, r, path.trimStart('/'), ref?.trim()?.takeIf { it.isNotEmpty() })
+}
+
+private fun repoCommitKey(owner: String, repo: String, sha: String): RepoCommitKey {
+    val (o, r) = normalizeRepoPair(owner, repo)
+    return RepoCommitKey(o, r, sha.trim())
+}
+
+private fun repoCompareKey(owner: String, repo: String, base: String, head: String): RepoCompareKey {
+    val (o, r) = normalizeRepoPair(owner, repo)
+    return RepoCompareKey(o, r, base.trim(), head.trim())
+}
+
 class GitHubRepository(
     private val sessionManager: SessionManager,
     private val networkConfig: GitHubNetworkConfig = GitHubNetworkConfig(sessionManager),
@@ -286,7 +316,7 @@ class GitHubRepository(
 
     fun peekSearchRepositories(query: String): List<RepoSummary>? = searchReposCache.peek(query.trim())
 
-    fun peekRepoDetail(owner: String, repo: String): RepoDetail? = repoDetailCache.peek(RepoKey(owner, repo))
+    fun peekRepoDetail(owner: String, repo: String): RepoDetail? = repoDetailCache.peek(repoKey(owner, repo))
 
     fun peekRepoIssuesOrPulls(
         owner: String,
@@ -296,13 +326,13 @@ class GitHubRepository(
     ): List<IssueOrPullSummary>? = repoIssuesCache.peek(RepoIssuesKey(owner, repo, pullRequests, stateFilter))
 
     fun peekDirectoryContents(owner: String, repo: String, path: String = "", ref: String? = null): List<TreeEntry>? =
-        dirCache.peek(RepoPathKey(owner, repo, path, ref))
+        dirCache.peek(repoPathKey(owner, repo, path, ref))
 
     fun peekFileContent(owner: String, repo: String, path: String, ref: String? = null): FileContent? =
-        fileCache.peek(RepoPathKey(owner, repo, path, ref))
+        fileCache.peek(repoPathKey(owner, repo, path, ref))
 
     fun peekReadme(owner: String, repo: String, ref: String? = null): String? =
-        readmeCache.peek(RepoPathKey(owner, repo, "", ref))
+        readmeCache.peek(repoPathKey(owner, repo, "", ref))
 
     fun peekContributionCalendar(login: String): ContributionCalendar? =
         contributionCache.peek(login)
@@ -669,7 +699,7 @@ class GitHubRepository(
         repo: String,
         forceRefresh: Boolean = false
     ): Result<RepoDetail> {
-        val key = RepoKey(owner, repo)
+        val key = repoKey(owner, repo)
         if (!forceRefresh) {
             repoDetailCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -714,7 +744,7 @@ class GitHubRepository(
         ref: String? = null,
         forceRefresh: Boolean = false
     ): Result<List<TreeEntry>> {
-        val key = RepoPathKey(owner, repo, path, ref)
+        val key = repoPathKey(owner, repo, path, ref)
         if (!forceRefresh) {
             dirCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -732,7 +762,7 @@ class GitHubRepository(
         ref: String? = null,
         forceRefresh: Boolean = false
     ): Result<FileContent> {
-        val key = RepoPathKey(owner, repo, path, ref)
+        val key = repoPathKey(owner, repo, path, ref)
         if (!forceRefresh) {
             fileCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -749,7 +779,7 @@ class GitHubRepository(
         ref: String? = null,
         forceRefresh: Boolean = false
     ): Result<String?> {
-        val key = RepoPathKey(owner, repo, "", ref)
+        val key = repoPathKey(owner, repo, "", ref)
         if (!forceRefresh) {
             readmeCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -788,11 +818,13 @@ class GitHubRepository(
     }
 
     private suspend fun invalidateRepoTreeCaches(owner: String, repo: String) {
-        dirCache.invalidateWhere { it.owner == owner && it.repo == repo }
-        fileCache.invalidateWhere { it.owner == owner && it.repo == repo }
-        readmeCache.invalidateWhere { it.owner == owner && it.repo == repo }
-        commitsCache.invalidateWhere { it.owner == owner && it.repo == repo }
-        repoDetailCache.invalidate(RepoKey(owner, repo))
+        val key = repoKey(owner, repo)
+        dirCache.invalidateWhere { it.owner == key.owner && it.repo == key.repo }
+        fileCache.invalidateWhere { it.owner == key.owner && it.repo == key.repo }
+        readmeCache.invalidateWhere { it.owner == key.owner && it.repo == key.repo }
+        commitsCache.invalidateWhere { it.owner == key.owner && it.repo == key.repo }
+        compareCache.invalidateWhere { it.owner == key.owner && it.repo == key.repo }
+        repoDetailCache.invalidate(key)
     }
 
     suspend fun setStarred(owner: String, repo: String, starred: Boolean): Result<Unit> = runCatching {
@@ -1028,10 +1060,11 @@ class GitHubRepository(
 
     suspend fun forkRepository(owner: String, repo: String): Result<RepoSummary> = runCatching {
         restService.forkRepositoryRest(owner, repo)
-    }.onSuccess {
+    }.onSuccess { forked ->
         viewerReposCache.invalidate("MY")
         userReposCache.clear()
-        repoDetailCache.invalidate(RepoKey(owner, repo))
+        repoDetailCache.invalidate(repoKey(owner, repo))
+        invalidateRepoTreeCaches(forked.owner, forked.name)
     }
 
     fun peekRepoSubscription(owner: String, repo: String): Boolean? =
@@ -1078,10 +1111,14 @@ class GitHubRepository(
         }
     }
 
-    suspend fun getRepoForks(owner: String, repo: String): Result<List<RepoSummary>> = runCatching {
+    suspend fun getRepoForks(
+        owner: String,
+        repo: String,
+        sort: String = "stargazers"
+    ): Result<List<RepoSummary>> = runCatching {
         val cleanOwner = owner.trim().ifBlank { repo.substringBefore('/', "").trim() }
         val cleanRepo = repo.substringAfterLast('/').trim()
-        restService.fetchRepoForks(cleanOwner, cleanRepo)
+        restService.fetchRepoForks(cleanOwner, cleanRepo, sort = sort)
     }
 
     suspend fun getRepoContributors(owner: String, repo: String): Result<List<UserSummary>> = runCatching {
@@ -1167,10 +1204,13 @@ class GitHubRepository(
     }
 
     fun peekRepoCommits(owner: String, repo: String, ref: String? = null, path: String = ""): List<CommitSummary>? =
-        commitsCache.peek(RepoPathKey(owner, repo, path, ref))
+        commitsCache.peek(repoPathKey(owner, repo, path, ref))
 
     fun peekCommitDetail(owner: String, repo: String, sha: String): CommitDetail? =
-        commitDetailCache.peek(RepoCommitKey(owner, repo, sha))
+        commitDetailCache.peek(repoCommitKey(owner, repo, sha))
+
+    fun peekCompareRefs(owner: String, repo: String, base: String, head: String): BranchCompareResult? =
+        compareCache.peek(repoCompareKey(owner, repo, base, head))
 
     suspend fun getRepoCommits(
         owner: String,
@@ -1179,7 +1219,7 @@ class GitHubRepository(
         path: String = "",
         forceRefresh: Boolean = false
     ): Result<List<CommitSummary>> {
-        val key = RepoPathKey(owner, repo, path, ref)
+        val key = repoPathKey(owner, repo, path, ref)
         if (!forceRefresh) {
             commitsCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -1196,7 +1236,7 @@ class GitHubRepository(
         sha: String,
         forceRefresh: Boolean = false
     ): Result<CommitDetail> {
-        val key = RepoCommitKey(owner, repo, sha)
+        val key = repoCommitKey(owner, repo, sha)
         if (!forceRefresh) {
             commitDetailCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -1212,7 +1252,7 @@ class GitHubRepository(
         repo: String,
         forceRefresh: Boolean = false
     ): Result<List<TagRef>> {
-        val key = RepoKey(owner, repo)
+        val key = repoKey(owner, repo)
         if (!forceRefresh) {
             tagsCache.peekIfFresh(key)?.let { return Result.success(it) }
         }
@@ -1230,7 +1270,7 @@ class GitHubRepository(
         head: String,
         forceRefresh: Boolean = false
     ): Result<BranchCompareResult> {
-        val key = RepoCompareKey(owner, repo, base, head)
+        val key = repoCompareKey(owner, repo, base, head)
         if (!forceRefresh) {
             compareCache.peekIfFresh(key)?.let { return Result.success(it) }
         }

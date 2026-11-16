@@ -28,6 +28,7 @@ import dev.maxxing.github.model.OrganizationSummary
 import dev.maxxing.github.model.PullFileChange
 import dev.maxxing.github.model.ReleaseAsset
 import dev.maxxing.github.model.ReleaseSummary
+import dev.maxxing.github.model.RepoParentSummary
 import dev.maxxing.github.model.RepoSummary
 import dev.maxxing.github.model.ReviewEvent
 import dev.maxxing.github.model.SecurityAdvisorySummary
@@ -43,6 +44,7 @@ import dev.maxxing.github.model.WorkflowRunSummary
 import dev.maxxing.github.model.WorkflowSummary
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -184,6 +186,28 @@ private data class RestRepoPermissionsDto(
 }
 
 @Serializable
+private data class RestRepoParentDto(
+    val name: String = "",
+    @SerialName("full_name") val fullName: String = "",
+    @SerialName("default_branch") val defaultBranch: String = "main",
+    val owner: RestRepoOwnerDto? = null
+) {
+    fun toRepoParentSummary(): RepoParentSummary? {
+        val cleanFull = fullName.trim()
+        if (cleanFull.isBlank()) return null
+        val cleanOwner = owner?.login?.takeIf { it.isNotBlank() } ?: cleanFull.substringBefore('/').trim()
+        val cleanName = name.takeIf { it.isNotBlank() } ?: cleanFull.substringAfter('/').trim()
+        return RepoParentSummary(
+            name = cleanName,
+            owner = cleanOwner,
+            fullName = cleanFull,
+            defaultBranch = defaultBranch.ifBlank { "main" },
+            ownerAvatarUrl = owner?.avatarUrl.orEmpty()
+        )
+    }
+}
+
+@Serializable
 private data class RestRepoDto(
     @SerialName("node_id") val nodeId: String = "",
     val id: Long = 0L,
@@ -201,7 +225,8 @@ private data class RestRepoDto(
     val permissions: RestRepoPermissionsDto? = null,
     @SerialName("default_branch") val defaultBranch: String = "main",
     @SerialName("updated_at") val updatedAt: String = "",
-    val owner: RestRepoOwnerDto? = null
+    val owner: RestRepoOwnerDto? = null,
+    val parent: RestRepoParentDto? = null
 ) {
     fun toRepoSummary(viewerHasStarred: Boolean = false): RepoSummary = RepoSummary(
         id = nodeId.ifBlank { "rest_$id" },
@@ -223,7 +248,8 @@ private data class RestRepoDto(
         viewerPermission = permissions?.highestRole(),
         hasKnownPermission = permissions != null,
         isArchived = archived,
-        hasIssuesEnabled = hasIssues
+        hasIssuesEnabled = hasIssues,
+        parent = parent?.toRepoParentSummary()
     )
 }
 
@@ -824,10 +850,15 @@ class GitHubRestService(
         path: String? = null,
         perPage: Int = 30
     ): List<CommitSummary> {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/commits") {
+        val res = httpClient.get("${repoPath(owner, repo)}/commits") {
+            noCacheHeaders()
             ref?.takeIf { it.isNotBlank() }?.let { parameter("sha", it) }
             path?.takeIf { it.isNotBlank() }?.let { parameter("path", it) }
             parameter("per_page", perPage)
+        }
+        // GitHub returns 409 Conflict when a repository is empty or a newly created fork is still initializing.
+        if (res.status.value == 409) {
+            return emptyList()
         }
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to load commits (${res.status.value})")
@@ -836,7 +867,9 @@ class GitHubRestService(
     }
 
     suspend fun fetchCommitDetail(owner: String, repo: String, sha: String): CommitDetail {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/commits/$sha")
+        val res = httpClient.get("${repoPath(owner, repo)}/commits/${sha.trim().encodeURLPathPart()}") {
+            noCacheHeaders()
+        }
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to load commit $sha (${res.status.value})")
         }
@@ -853,7 +886,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchRepoTags(owner: String, repo: String, perPage: Int = 30): List<TagRef> {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/tags") {
+        val res = httpClient.get("${repoPath(owner, repo)}/tags") {
+            noCacheHeaders()
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -868,9 +902,11 @@ class GitHubRestService(
         base: String,
         head: String
     ): BranchCompareResult {
-        val encodedBase = base.encodeURLPathPart()
-        val encodedHead = head.encodeURLPathPart()
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/compare/${encodedBase}...${encodedHead}")
+        val encodedBase = encodeCompareRef(base)
+        val encodedHead = encodeCompareRef(head)
+        val res = httpClient.get("${repoPath(owner, repo)}/compare/${encodedBase}...${encodedHead}") {
+            noCacheHeaders()
+        }
         if (!res.status.isSuccess()) {
             throw GitHubApiException(res.status.value, "Failed to compare $base...$head (${res.status.value})")
         }
@@ -1288,7 +1324,8 @@ class GitHubRestService(
     }
 
     suspend fun fetchBranches(owner: String, repo: String): List<BranchRef> {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/branches") {
+        val res = httpClient.get("${repoPath(owner, repo)}/branches") {
+            noCacheHeaders()
             parameter("per_page", 100)
         }
         if (!res.status.isSuccess()) {
@@ -1303,13 +1340,14 @@ class GitHubRestService(
         path: String = "",
         ref: String? = null
     ): List<TreeEntry> {
-        val cleanPath = path.trimStart('/')
+        val cleanPath = encodeRepoSubPath(path)
         val url = if (cleanPath.isEmpty()) {
-            "$baseUrl/repos/$owner/$repo/contents"
+            "${repoPath(owner, repo)}/contents"
         } else {
-            "$baseUrl/repos/$owner/$repo/contents/$cleanPath"
+            "${repoPath(owner, repo)}/contents/$cleanPath"
         }
         val res = httpClient.get(url) {
+            noCacheHeaders()
             if (!ref.isNullOrBlank()) parameter("ref", ref)
         }
         if (!res.status.isSuccess()) {
@@ -1335,8 +1373,9 @@ class GitHubRestService(
         path: String,
         ref: String? = null
     ): FileContent {
-        val cleanPath = path.trimStart('/')
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/contents/$cleanPath") {
+        val cleanPath = encodeRepoSubPath(path)
+        val res = httpClient.get("${repoPath(owner, repo)}/contents/$cleanPath") {
+            noCacheHeaders()
             if (!ref.isNullOrBlank()) parameter("ref", ref)
         }
         if (!res.status.isSuccess()) {
@@ -1586,7 +1625,8 @@ class GitHubRestService(
 
     @OptIn(ExperimentalEncodingApi::class)
     suspend fun fetchReadme(owner: String, repo: String, ref: String? = null): String? {
-        val res = httpClient.get("$baseUrl/repos/$owner/$repo/readme") {
+        val res = httpClient.get("${repoPath(owner, repo)}/readme") {
+            noCacheHeaders()
             if (!ref.isNullOrBlank()) parameter("ref", ref)
         }
         if (!res.status.isSuccess()) return null
@@ -1896,7 +1936,7 @@ class GitHubRestService(
     }
 
     suspend fun forkRepositoryRest(owner: String, repo: String): RepoSummary {
-        val res = httpClient.post("$baseUrl/repos/$owner/$repo/forks") {
+        val res = httpClient.post("${repoPath(owner, repo)}/forks") {
             header(HttpHeaders.ContentLength, "0")
         }
         if (!res.status.isSuccess()) {
@@ -1943,10 +1983,21 @@ class GitHubRestService(
         }
     }
 
-    suspend fun fetchRepoForks(owner: String, repo: String, perPage: Int = 30): List<RepoSummary> {
-        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
-        val res = httpClient.get("$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}/forks") {
-            parameter("sort", "stargazers")
+    suspend fun fetchRepoForks(
+        owner: String,
+        repo: String,
+        sort: String = "stargazers",
+        perPage: Int = 30
+    ): List<RepoSummary> {
+        val normalizedSort = when (sort.lowercase()) {
+            "newest" -> "newest"
+            "oldest" -> "oldest"
+            "watchers" -> "watchers"
+            else -> "stargazers"
+        }
+        val res = httpClient.get("${repoPath(owner, repo)}/forks") {
+            noCacheHeaders()
+            parameter("sort", normalizedSort)
             parameter("per_page", perPage)
         }
         if (!res.status.isSuccess()) {
@@ -2023,6 +2074,34 @@ class GitHubRestService(
             .sortedByDescending { it.totalCommits }
             .take(15)
         return stats to false
+    }
+
+    private fun repoPath(owner: String, repo: String): String {
+        val (cleanOwner, cleanRepo) = normalizeOwnerRepo(owner, repo)
+        return "$baseUrl/repos/${cleanOwner.encodeURLPathPart()}/${cleanRepo.encodeURLPathPart()}"
+    }
+
+    private fun encodeRepoSubPath(path: String): String =
+        path.trimStart('/')
+            .split('/')
+            .filter { it.isNotEmpty() }
+            .joinToString("/") { it.encodeURLPathPart() }
+
+    private fun encodeCompareRef(ref: String): String {
+        val trimmed = ref.trim()
+        val colonIdx = trimmed.indexOf(':')
+        return if (colonIdx > 0) {
+            val refOwner = trimmed.substring(0, colonIdx).trim().encodeURLPathPart()
+            val refBranch = trimmed.substring(colonIdx + 1).trim().encodeURLPathPart()
+            "$refOwner:$refBranch"
+        } else {
+            trimmed.encodeURLPathPart()
+        }
+    }
+
+    private fun HttpRequestBuilder.noCacheHeaders() {
+        header(HttpHeaders.CacheControl, "no-cache")
+        header(HttpHeaders.Pragma, "no-cache")
     }
 
     private fun normalizeOwnerRepo(owner: String, repo: String): Pair<String, String> {

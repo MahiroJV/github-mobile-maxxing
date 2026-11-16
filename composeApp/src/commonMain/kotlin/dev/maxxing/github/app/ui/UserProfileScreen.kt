@@ -65,6 +65,7 @@ import dev.maxxing.github.app.AppContainer
 import dev.maxxing.github.app.IssuePullTarget
 import dev.maxxing.github.auth.openUrlInBrowser
 import dev.maxxing.github.model.ActivityEvent
+import dev.maxxing.github.model.ActivityEventKind
 import dev.maxxing.github.model.ContributionCalendar
 import dev.maxxing.github.model.OrganizationSummary
 import dev.maxxing.github.model.RepoSummary
@@ -447,6 +448,17 @@ fun UserProfileScreen(
                                                 val num = ev.targetIssueNumber
                                                 if (num != null && ev.repoOwner.isNotBlank()) {
                                                     onOpenIssueOrPull(IssuePullTarget(ev.repoOwner, ev.repoName, num, ev.detailTitle))
+                                                } else if (ev.kind == ActivityEventKind.FORK && !ev.detailTitle.isNullOrBlank() && '/' in ev.detailTitle!!) {
+                                                    val forkFull = ev.detailTitle!!.trim()
+                                                    onOpenRepo(
+                                                        RepoSummary(
+                                                            id = forkFull,
+                                                            name = forkFull.substringAfter('/'),
+                                                            owner = forkFull.substringBefore('/'),
+                                                            fullName = forkFull,
+                                                            isFork = true
+                                                        )
+                                                    )
                                                 } else if (ev.repoOwner.isNotBlank()) {
                                                     onOpenRepo(
                                                         RepoSummary(

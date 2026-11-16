@@ -20,6 +20,7 @@ import dev.maxxing.github.model.LabelTag
 import dev.maxxing.github.model.MilestoneSummary
 import dev.maxxing.github.model.ReactionSummary
 import dev.maxxing.github.model.RepoDetail
+import dev.maxxing.github.model.RepoParentSummary
 import dev.maxxing.github.model.RepoSummary
 import dev.maxxing.github.model.TimelineEvent
 import dev.maxxing.github.model.UserSummary
@@ -615,19 +616,26 @@ class GitHubGraphQlService(
 
     suspend fun fetchRepoDetail(owner: String, name: String): RepoDetail {
         val data = execute(
-            """
-            query {
-              repository(owner: "$owner", name: "$name") {
-                $REPO_FIELDS
-                homepageUrl
-                licenseInfo { name }
-                watchers { totalCount }
-                repositoryTopics(first: 10) {
-                  nodes { topic { name } }
+            query = """
+                query(${'$'}owner: String!, ${'$'}name: String!) {
+                  repository(owner: ${'$'}owner, name: ${'$'}name) {
+                    $REPO_FIELDS
+                    homepageUrl
+                    licenseInfo { name }
+                    watchers { totalCount }
+                    repositoryTopics(first: 10) {
+                      nodes { topic { name } }
+                    }
+                    parent {
+                      name
+                      nameWithOwner
+                      owner { login avatarUrl }
+                      defaultBranchRef { name }
+                    }
+                  }
                 }
-              }
-            }
-            """.trimIndent()
+            """.trimIndent(),
+            variables = mapOf("owner" to owner, "name" to name)
         )
         val repoObj = data.obj("repository")
             ?: throw GitHubApiException(404, "Repository $owner/$name not found")
@@ -786,6 +794,21 @@ class GitHubGraphQlService(
         val defaultBranch = obj.obj("defaultBranchRef")?.str("name") ?: "main"
         val hasPermField = "viewerPermission" in obj
         val viewerPermission = obj.str("viewerPermission")?.uppercase()
+        val parentObj = obj.obj("parent")
+        val parentSummary = parentObj?.str("nameWithOwner")?.takeIf { it.isNotBlank() }?.let { parentFullName ->
+            val parentOwnerObj = parentObj.obj("owner")
+            val parentOwner = parentOwnerObj?.str("login")?.takeIf { it.isNotBlank() }
+                ?: parentFullName.substringBefore('/')
+            val parentName = parentObj.str("name")?.takeIf { it.isNotBlank() }
+                ?: parentFullName.substringAfter('/')
+            RepoParentSummary(
+                name = parentName,
+                owner = parentOwner,
+                fullName = parentFullName,
+                defaultBranch = parentObj.obj("defaultBranchRef")?.str("name") ?: "main",
+                ownerAvatarUrl = parentOwnerObj?.str("avatarUrl").orEmpty()
+            )
+        }
         return RepoSummary(
             id = obj.str("id") ?: "",
             name = obj.str("name") ?: "",
@@ -806,7 +829,8 @@ class GitHubGraphQlService(
             viewerPermission = viewerPermission,
             hasKnownPermission = hasPermField,
             isArchived = obj.bool("isArchived") ?: false,
-            hasIssuesEnabled = obj.bool("hasIssuesEnabled") ?: true
+            hasIssuesEnabled = obj.bool("hasIssuesEnabled") ?: true,
+            parent = parentSummary
         )
     }
 
