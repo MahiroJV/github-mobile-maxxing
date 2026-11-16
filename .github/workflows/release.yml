@@ -50,8 +50,13 @@ jobs:
       - name: Build Android Release APK
         run: ./gradlew :androidApp:assembleRelease --no-daemon
 
-      - name: Prepare Release APK
-        run: cp androidApp/build/outputs/apk/release/androidApp-release.apk github-mobile-maxxing-release.apk
+      - name: Build Linux AppImage
+        run: ./gradlew :composeApp:packageLinuxAppImage --no-daemon
+
+      - name: Prepare Release Artifacts
+        run: |
+          cp androidApp/build/outputs/apk/release/androidApp-release.apk github-mobile-maxxing-release.apk
+          cp composeApp/build/compose/binaries/main/appimage/github-mobile-maxxing-x86_64.AppImage github-mobile-maxxing-x86_64.AppImage
 
       - name: Publish GitHub Release
         env:
@@ -59,9 +64,14 @@ jobs:
           TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" github-mobile-maxxing-release.apk --clobber
+            gh release upload "$TAG_NAME" \
+              github-mobile-maxxing-release.apk \
+              github-mobile-maxxing-x86_64.AppImage \
+              --clobber
           else
-            gh release create "$TAG_NAME" github-mobile-maxxing-release.apk \
+            gh release create "$TAG_NAME" \
+              github-mobile-maxxing-release.apk \
+              github-mobile-maxxing-x86_64.AppImage \
               --title "github-mobile-maxxing $TAG_NAME" \
               --generate-notes
           fi

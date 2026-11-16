@@ -107,3 +107,9 @@ compose.desktop {
         }
     }
 }
+
+tasks.register<Exec>("packageLinuxAppImage") {
+    dependsOn("createDistributable")
+    workingDir = rootProject.projectDir
+    commandLine("bash", "scripts/package-linux-appimage.sh")
+}

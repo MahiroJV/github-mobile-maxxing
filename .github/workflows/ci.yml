@@ -49,8 +49,14 @@ jobs:
       - name: Build Android Release APK
         run: ./gradlew :androidApp:assembleRelease --no-daemon
 
+      - name: Build Linux AppImage
+        run: ./gradlew :composeApp:packageLinuxAppImage --no-daemon
+
       - name: Verify Compose resources bundled in APK
         run: unzip -l androidApp/build/outputs/apk/release/androidApp-release.apk | grep -q "assets/composeResources/.*/app_icon.png"
+
+      - name: Verify Linux AppImage artifact generated
+        run: test -x composeApp/build/compose/binaries/main/appimage/github-mobile-maxxing-x86_64.AppImage
 
       - name: Upload Desktop test results
         if: always()
@@ -68,3 +74,9 @@ jobs:
         with:
           name: github-mobile-maxxing-release-apk
           path: github-mobile-maxxing-release.apk
+
+      - name: Upload Linux AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-mobile-maxxing-linux-appimage
+          path: composeApp/build/compose/binaries/main/appimage/github-mobile-maxxing-x86_64.AppImage

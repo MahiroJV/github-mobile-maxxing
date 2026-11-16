@@ -30,9 +30,9 @@ A fast, custom **GitHub client** built with **Kotlin Multiplatform (KMP)** and *
 ```bash
 ./gradlew :composeApp:run
 ```
-Create a Linux distributable (`AppImage` / `.deb` / runnable bundle):
+Create a standalone Linux `AppImage` (`composeApp/build/compose/binaries/main/appimage/github-mobile-maxxing-x86_64.AppImage`):
 ```bash
-./gradlew :composeApp:createDistributable
+./gradlew :composeApp:packageLinuxAppImage
 ```
 
 #### Android
