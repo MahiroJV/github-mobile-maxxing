@@ -7,12 +7,28 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.time.Clock
 
 class SessionManager(
     private val tokenStore: TokenStore = createPlatformTokenStore(),
     private val deviceFlowClient: DeviceFlowClient = DeviceFlowClient(),
-    private val defaultClientId: String = ""
+    private val defaultClientId: String = "",
+    private val nowEpochSeconds: () -> Long = { Clock.System.now().epochSeconds }
 ) {
+    private val refreshMutex = Mutex()
+
+    private val _sessionNotice = MutableStateFlow<String?>(null)
+
+    /** Why the user was signed out without asking (expired or revoked token), shown on the sign-in screen. */
+    val sessionNotice: StateFlow<String?> = _sessionNotice.asStateFlow()
+
+    private val _storageWarning = MutableStateFlow<String?>(null)
+
+    /** Set when the platform could not store the session in a secure keystore. */
+    val storageWarning: StateFlow<String?> = _storageWarning.asStateFlow()
+
     private val _session = MutableStateFlow<AuthSession?>(null)
     val session: StateFlow<AuthSession?> = _session.asStateFlow()
 
@@ -43,7 +59,74 @@ class SessionManager(
             .filter { '/' in it }
             .distinct()
         _session.value = tokenStore.loadSession()
+        _storageWarning.value = tokenStore.sessionStorageWarning()
         _isInitialized.value = true
+    }
+
+    private suspend fun storeSession(session: AuthSession) {
+        tokenStore.saveSession(session)
+        _session.value = session
+        _storageWarning.value = tokenStore.sessionStorageWarning()
+    }
+
+    /**
+     * The access token to send with a request, refreshed first when it is about to expire.
+     * Returns null when signed out.
+     */
+    suspend fun freshAccessToken(): String? {
+        val current = _session.value ?: return null
+        if (current.refreshToken == null || !current.expiresWithin(nowEpochSeconds(), EXPIRY_MARGIN_SECONDS)) {
+            return current.accessToken
+        }
+        return refreshMutex.withLock {
+            val latest = _session.value ?: return@withLock null
+            if (latest.accessToken != current.accessToken) return@withLock latest.accessToken
+            when (val result = deviceFlowClient.refreshAccessToken(_clientId.value, latest)) {
+                is TokenRefreshResult.Refreshed -> {
+                    storeSession(result.session)
+                    result.session.accessToken
+                }
+                // Let the request go out with the old token; a 401 will settle it.
+                is TokenRefreshResult.Unavailable -> latest.accessToken
+                is TokenRefreshResult.Rejected -> {
+                    expireSession()
+                    null
+                }
+            }
+        }
+    }
+
+    /**
+     * Call when GitHub answers 401 to a request sent with [rejectedToken]. Returns a replacement
+     * token to retry with, or null when there is none (the session was ended, or GitHub could not
+     * be reached to refresh it).
+     */
+    suspend fun onTokenRejected(rejectedToken: String): String? = refreshMutex.withLock {
+        val current = _session.value ?: return@withLock null
+        // Another request already replaced the token while this one was in flight.
+        if (current.accessToken != rejectedToken) return@withLock current.accessToken
+        if (current.refreshToken != null) {
+            when (val result = deviceFlowClient.refreshAccessToken(_clientId.value, current)) {
+                is TokenRefreshResult.Refreshed -> {
+                    storeSession(result.session)
+                    return@withLock result.session.accessToken
+                }
+                is TokenRefreshResult.Unavailable -> return@withLock null
+                is TokenRefreshResult.Rejected -> Unit
+            }
+        }
+        expireSession()
+        null
+    }
+
+    private suspend fun expireSession() {
+        tokenStore.clearSession()
+        _sessionNotice.value = "Your GitHub session expired or was revoked. Please sign in again."
+        _session.value = null
+    }
+
+    fun dismissSessionNotice() {
+        _sessionNotice.value = null
     }
 
     suspend fun updateClientId(newClientId: String) {
@@ -56,8 +139,8 @@ class SessionManager(
         val targetId = (clientIdOverride ?: _clientId.value).trim()
         return deviceFlowClient.startDeviceFlow(targetId).onEach { state ->
             if (state is DeviceCodeState.Authenticated) {
-                tokenStore.saveSession(state.session)
-                _session.value = state.session
+                _sessionNotice.value = null
+                storeSession(state.session)
                 if (targetId.isNotEmpty()) {
                     _clientId.value = targetId
                     tokenStore.saveClientId(targetId)
@@ -68,8 +151,8 @@ class SessionManager(
 
     suspend fun signInWithPat(token: String): Result<AuthSession> {
         return deviceFlowClient.verifyPersonalAccessToken(token).onSuccess { verified ->
-            tokenStore.saveSession(verified)
-            _session.value = verified
+            _sessionNotice.value = null
+            storeSession(verified)
         }
     }
 
@@ -114,6 +197,12 @@ class SessionManager(
         tokenStore.saveSeenNotificationMarkers(emptyMap())
         tokenStore.savePinnedRepos(emptyList())
         _pinnedRepos.value = emptyList()
+        _sessionNotice.value = null
+        _storageWarning.value = null
         _session.value = null
+    }
+
+    private companion object {
+        const val EXPIRY_MARGIN_SECONDS = 60L
     }
 }

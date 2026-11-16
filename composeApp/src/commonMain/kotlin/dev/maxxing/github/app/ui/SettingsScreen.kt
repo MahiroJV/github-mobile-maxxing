@@ -76,6 +76,7 @@ fun SettingsScreen(
 ) {
     val session by container.sessionManager.session.collectAsState()
     val profile by container.viewerProfile.collectAsState()
+    val storageWarning by container.sessionManager.storageWarning.collectAsState()
     val rateLimit by container.repository.rateLimit.collectAsState()
     val themePrefs by container.sessionManager.themePreferences.collectAsState()
     val notifPrefs by container.sessionManager.notificationPreferences.collectAsState()
@@ -158,6 +159,30 @@ fun SettingsScreen(
                         Icon(Lucide.LogOut, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Sign Out")
+                    }
+                }
+            }
+
+            storageWarning?.let { warning ->
+                ElevatedCard(
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = "Token is not in a keyring",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = warning,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
                     }
                 }
             }

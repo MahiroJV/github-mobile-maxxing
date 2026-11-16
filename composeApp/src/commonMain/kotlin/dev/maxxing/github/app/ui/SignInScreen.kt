@@ -88,6 +88,7 @@ fun SignInScreen(
     onSignedIn: () -> Unit
 ) {
     val savedClientId by sessionManager.clientId.collectAsState()
+    val sessionNotice by sessionManager.sessionNotice.collectAsState()
     var clientIdInput by remember(savedClientId) { mutableStateOf(savedClientId) }
     var patInput by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf(SignInTab.OAUTH_DEVICE) }
@@ -149,6 +150,22 @@ fun SignInScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
+
+                    sessionNotice?.let { notice ->
+                        Spacer(Modifier.height(16.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = notice,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
 
                     Spacer(Modifier.height(22.dp))
 

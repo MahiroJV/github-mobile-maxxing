@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower. The session file is encrypted with a Keystore key that never leaves
+     the device, so a restored copy could not be decrypted. -->
+<full-backup-content>
+    <exclude domain="file" path="maxxing_session.enc" />
+</full-backup-content>

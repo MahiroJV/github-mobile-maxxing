@@ -31,6 +31,9 @@ interface TokenStore {
     suspend fun loadSeenNotificationMarkers(): Map<String, String>
     suspend fun savePinnedRepos(repos: List<String>) {}
     suspend fun loadPinnedRepos(): List<String> = emptyList()
+
+    /** Non-null when the saved session is not protected by a platform keystore. */
+    suspend fun sessionStorageWarning(): String? = null
 }
 
 expect fun createPlatformTokenStore(): TokenStore

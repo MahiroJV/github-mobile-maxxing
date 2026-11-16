@@ -6,9 +6,13 @@ import dev.maxxing.github.model.RateLimitInfo
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpResponseValidator
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.Url
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,9 +42,6 @@ class GitHubNetworkConfig(
             json(json)
         }
         install(DefaultRequest) {
-            sessionManager.session.value?.accessToken?.let { token ->
-                header(HttpHeaders.Authorization, "Bearer $token")
-            }
             header(HttpHeaders.Accept, "application/vnd.github+json")
             header("X-GitHub-Api-Version", "2022-11-28")
             header(HttpHeaders.UserAgent, AppBranding.USER_AGENT)
@@ -59,5 +60,31 @@ class GitHubNetworkConfig(
                 }
             }
         }
+    }.apply { installSessionAuth(sessionManager, baseUrl) }
+}
+
+/**
+ * Sends the current access token with every request (refreshing it first when it is about to
+ * expire) and reacts to a 401 from the GitHub API: the token is refreshed and the request retried
+ * once, or, when that is not possible, the session is ended so the app returns to sign-in.
+ */
+fun HttpClient.installSessionAuth(sessionManager: SessionManager, apiBaseUrl: String) {
+    val apiHost = Url(apiBaseUrl).host.lowercase()
+    plugin(HttpSend).intercept { request ->
+        val token = if (request.headers.contains(HttpHeaders.Authorization)) {
+            null
+        } else {
+            sessionManager.freshAccessToken()?.also { request.headers[HttpHeaders.Authorization] = "Bearer $it" }
+        }
+        val call = execute(request)
+        if (token == null ||
+            call.response.status != HttpStatusCode.Unauthorized ||
+            request.url.host.lowercase() != apiHost
+        ) {
+            return@intercept call
+        }
+        val replacement = sessionManager.onTokenRejected(token) ?: return@intercept call
+        request.headers[HttpHeaders.Authorization] = "Bearer $replacement"
+        execute(request)
     }
 }

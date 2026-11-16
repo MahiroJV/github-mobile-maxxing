@@ -9,7 +9,9 @@ import java.awt.Desktop
 import java.io.File
 import java.net.URI
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.TimeUnit
 
 private class LinuxDesktopTokenStore : TokenStore {
@@ -31,8 +33,7 @@ private class LinuxDesktopTokenStore : TokenStore {
     override suspend fun saveSession(session: AuthSession) = withContext(Dispatchers.IO) {
         val encoded = json.encodeToString(session)
         if (!trySecretToolStore(encoded)) {
-            sessionFile.writeText(encoded)
-            restrictPermissions(sessionFile)
+            writeOwnerOnly(sessionFile, encoded)
         } else if (sessionFile.exists()) {
             sessionFile.delete()
         }
@@ -55,8 +56,7 @@ private class LinuxDesktopTokenStore : TokenStore {
     }
 
     override suspend fun saveClientId(clientId: String) = withContext(Dispatchers.IO) {
-        configFile.writeText(clientId)
-        restrictPermissions(configFile)
+        writeOwnerOnly(configFile, clientId)
     }
 
     override suspend fun loadClientId(): String? = withContext(Dispatchers.IO) {
@@ -103,10 +103,34 @@ private class LinuxDesktopTokenStore : TokenStore {
             .getOrDefault(emptyList())
     }
 
-    private fun restrictPermissions(file: File) {
-        runCatching {
-            val perms = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
-            Files.setPosixFilePermissions(file.toPath(), perms)
+    override suspend fun sessionStorageWarning(): String? = withContext(Dispatchers.IO) {
+        if (sessionFile.exists()) {
+            "No system keyring was available, so your GitHub token is stored unencrypted in " +
+                "${sessionFile.absolutePath} (readable only by your user). Install libsecret's " +
+                "secret-tool with GNOME Keyring or KWallet, then sign in again to move it into the keyring."
+        } else {
+            null
+        }
+    }
+
+    /**
+     * Writes [content] so the file is never readable by other users, not even briefly: it is
+     * created owner-only under a temporary name and then moved into place.
+     */
+    private fun writeOwnerOnly(file: File, content: String) {
+        val dir = file.parentFile.toPath()
+        val ownerOnly = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        val tmp = try {
+            Files.createTempFile(dir, file.name, ".tmp", PosixFilePermissions.asFileAttribute(ownerOnly))
+        } catch (_: UnsupportedOperationException) {
+            Files.createTempFile(dir, file.name, ".tmp")
+        }
+        try {
+            Files.write(tmp, content.encodeToByteArray())
+            Files.move(tmp, file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) {
+            Files.deleteIfExists(tmp)
+            throw e
         }
     }
 

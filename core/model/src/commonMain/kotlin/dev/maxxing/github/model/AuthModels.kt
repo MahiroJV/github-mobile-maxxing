@@ -14,8 +14,17 @@ data class AuthSession(
     val tokenType: String = "bearer",
     val scope: String = "",
     val authMethod: AuthMethod = AuthMethod.DEVICE_FLOW,
-    val userLogin: String? = null
-)
+    val userLogin: String? = null,
+    /** Only present for expiring tokens (GitHub Apps); classic OAuth app tokens and PATs have none. */
+    val refreshToken: String? = null,
+    val expiresAtEpochSeconds: Long? = null,
+    val refreshTokenExpiresAtEpochSeconds: Long? = null
+) {
+    fun expiresWithin(nowEpochSeconds: Long, marginSeconds: Long): Boolean {
+        val expiresAt = expiresAtEpochSeconds ?: return false
+        return nowEpochSeconds + marginSeconds >= expiresAt
+    }
+}
 
 sealed interface DeviceCodeState {
     data object Idle : DeviceCodeState

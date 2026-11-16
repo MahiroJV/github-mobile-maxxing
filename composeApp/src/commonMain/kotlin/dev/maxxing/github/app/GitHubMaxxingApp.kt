@@ -142,6 +142,9 @@ fun GitHubMaxxingApp(
         if (session != null) {
             val loaded = container.refreshViewerProfile()
             container.warmUpWorkspace(loaded?.login ?: session?.userLogin)
+        } else if (isInitialized) {
+            // Also covers sessions ended by an expired or revoked token, not just Sign Out.
+            container.clearCachedProfile()
         }
     }
 
